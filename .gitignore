@@ -1,0 +1,14 @@
+# Runtime identity and private overlay/RPC configuration
+identity.key*
+proxy.json
+peers.json
+
+# Built artifacts and rollback binaries
+dist/
+zhp2pproxy
+zhp2pproxy.*
+
+# Local noise
+*.log
+.env
+.env.*
