@@ -1,0 +1,29 @@
+[Unit]
+Description=ZHP2PProxy RPC overlay gateway
+Documentation=https://link.zeroscan.st/zhp2pproxy/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+Group=@GROUP@
+Environment=HOME=@HOME@
+WorkingDirectory=@INSTALL_DIR@
+ExecStart=@INSTALL_DIR@/zhp2pproxy -config @INSTALL_DIR@/proxy.json
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+LimitNOFILE=65536
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+ReadWritePaths=@INSTALL_DIR@
+
+[Install]
+WantedBy=multi-user.target

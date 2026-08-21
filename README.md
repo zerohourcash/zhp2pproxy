@@ -1,5 +1,48 @@
 # ZHP2PProxy rewrite
 
+## Установка на Linux-сервер
+
+Установщик поддерживает `amd64` и `arm64`, проверяет SHA-256 архива, кладёт
+исполняемые файлы в `$HOME/zhp2pproxy`, создает systemd unit и сразу включает
+автозапуск:
+
+```bash
+curl -fsSL https://link.zeroscan.st/zhp2pproxy/install.sh -o /tmp/install-zhp2pproxy.sh
+sudo bash /tmp/install-zhp2pproxy.sh
+```
+
+На обычном root-сервере результат находится в `/root/zhp2pproxy`. Для
+отдельного системного пользователя укажи его явно:
+
+```bash
+sudo ZHP2P_USER=zhproxy bash /tmp/install-zhp2pproxy.sh
+```
+
+Повторный запуск обновляет бинарник, но сохраняет `proxy.json`,
+`identity.key` и `peers.json`. Предыдущий бинарник остается как
+`zhp2pproxy.previous`.
+
+Проверка после установки:
+
+```bash
+systemctl status zhp2pproxy --no-pager -l
+journalctl -u zhp2pproxy -f
+curl http://127.0.0.1:8081/info
+```
+
+Начальный `proxy.json` подключается к сети `zhcash-proxy-main` через bootstrap
+на `link.zeroscan.st`, слушает HTTP API только на loopback и не содержит
+приватных RPC credentials. Если локальная ZHCASH-нода использует стандартный
+`~/.zerohour/zerohour.conf`, прокси найдет RPC credentials автоматически.
+Иначе отредактируй `$HOME/zhp2pproxy/proxy.json` и перезапусти службу:
+
+```bash
+sudo systemctl restart zhp2pproxy
+```
+
+Для публичной relay-ноды открой TCP/UDP `10001`. HTTP `8081` и native tunnel
+`3890` по умолчанию остаются доступны только локально.
+
 Новая реализация находится в исходниках Go и собирается обычным способом:
 
 ```bash

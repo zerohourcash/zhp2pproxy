@@ -7,6 +7,7 @@ peers.json
 dist/
 zhp2pproxy
 zhp2pproxy.*
+!zhp2pproxy.service.in
 
 # Local noise
 *.log
