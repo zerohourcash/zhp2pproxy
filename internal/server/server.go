@@ -14,6 +14,7 @@ func New(cfg config.Config, h *proxy.Handler, metrics *proxy.Metrics) http.Handl
 	mux.HandleFunc("/health", h.Health)
 	mux.HandleFunc("/admin/status", h.AdminStatus)
 	mux.HandleFunc("/admin/connect", h.AdminConnect)
+	mux.HandleFunc("/admin/probe", h.AdminProbe)
 	mux.HandleFunc("/pubsub/publish", h.Publish)
 	return middleware(cfg, metrics, mux)
 }

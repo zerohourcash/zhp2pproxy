@@ -192,7 +192,7 @@ ZHCASH-ноду, затем закрыть и снова открыть `zhp2ppr
 - P2P fallback через stream protocol `/zhcash/rpc/1.0.0`;
 - стабильный peer identity в `identity.key`;
 - peer cache в `peers.json`.
-- admin API для дебага: `/admin/status`, `/admin/connect`.
+- admin API для дебага: `/admin/status`, `/admin/connect`, `/admin/probe`.
 
 Минимальный приватный конфиг:
 
@@ -259,9 +259,14 @@ curl http://127.0.0.1:8081/admin/status
 curl -X POST http://127.0.0.1:8081/admin/connect \
   -H 'Content-Type: application/json' \
   -d '{"addr":"/ip4/1.2.3.4/tcp/10001/p2p/PEER_ID"}'
+curl -X POST http://127.0.0.1:8081/admin/probe \
+  -H 'Content-Type: application/json' \
+  -d '{"peer_id":"PEER_ID","method":"getblockcount","params":[]}'
 ```
 
 `/admin/status` показывает network id, peer id, protocol namespace, listen addrs, bootstrap peers, connected peers, known peers, connection addresses, metrics, score, public IP flag, success/failure counters and average RPC latency.
+`/admin/probe` выполняет разрешенный RPC-метод через строго указанный
+подключенный peer для end-to-end проверки конкретной ноды.
 
 ## RPC distribution
 

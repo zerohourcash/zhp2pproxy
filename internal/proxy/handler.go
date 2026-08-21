@@ -17,6 +17,7 @@ import (
 
 type P2PRPC interface {
 	CallAny(ctx context.Context, req jsonrpc.Request) (json.RawMessage, error)
+	CallPeer(ctx context.Context, peerID string, req jsonrpc.Request) (json.RawMessage, error)
 	Info() any
 	AdminState() any
 	ConnectPeer(ctx context.Context, addr string) error
@@ -257,6 +258,58 @@ func (h *Handler) AdminConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func (h *Handler) AdminProbe(w http.ResponseWriter, r *http.Request) {
+	if !h.authorizeAdmin(w, r) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	defer r.Body.Close()
+	var probe struct {
+		PeerID string          `json:"peer_id"`
+		Method string          `json:"method"`
+		Params json.RawMessage `json:"params"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, h.cfg.MaxBodyBytes)).Decode(&probe); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if probe.PeerID == "" {
+		http.Error(w, "missing peer_id", http.StatusBadRequest)
+		return
+	}
+	if probe.Method == "" {
+		probe.Method = "getblockcount"
+	}
+	if !MethodAllowed(probe.Method) {
+		http.Error(w, "method not allowed", http.StatusBadRequest)
+		return
+	}
+	if len(probe.Params) == 0 {
+		probe.Params = json.RawMessage("[]")
+	}
+	if h.p2p == nil {
+		http.Error(w, "p2p unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	inc(&h.metrics.P2PAttempts)
+	result, err := h.p2p.CallPeer(r.Context(), probe.PeerID, jsonrpc.Request{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  probe.Method,
+		Params:  probe.Params,
+	})
+	if err != nil {
+		inc(&h.metrics.P2PFailures)
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	inc(&h.metrics.P2PSuccesses)
+	writeJSON(w, map[string]any{"ok": true, "peer_id": probe.PeerID, "method": probe.Method, "result": result})
 }
 
 func (h *Handler) authorizeAdmin(w http.ResponseWriter, r *http.Request) bool {

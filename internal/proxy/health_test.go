@@ -13,10 +13,18 @@ import (
 )
 
 type healthTestP2P struct {
-	peers int
+	peers      int
+	lastPeerID string
+	lastMethod string
 }
 
 func (p *healthTestP2P) CallAny(context.Context, jsonrpc.Request) (json.RawMessage, error) {
+	return json.RawMessage("1"), nil
+}
+
+func (p *healthTestP2P) CallPeer(_ context.Context, peerID string, req jsonrpc.Request) (json.RawMessage, error) {
+	p.lastPeerID = peerID
+	p.lastMethod = req.Method
 	return json.RawMessage("1"), nil
 }
 

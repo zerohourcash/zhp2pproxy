@@ -389,6 +389,22 @@ func (s *Service) CallAny(ctx context.Context, req jsonrpc.Request) (json.RawMes
 	return nil, last
 }
 
+// CallPeer sends an RPC request to one specific connected overlay peer. It is
+// intended for authenticated health diagnostics, not normal load balancing.
+func (s *Service) CallPeer(ctx context.Context, peerID string, req jsonrpc.Request) (json.RawMessage, error) {
+	id, err := peer.Decode(peerID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid peer id: %w", err)
+	}
+	if s.host.Network().Connectedness(id) == network.NotConnected {
+		return nil, fmt.Errorf("peer %s is not connected", id)
+	}
+	started := time.Now()
+	result, err := s.callPeer(ctx, id, req)
+	s.recordPeerResult(id, time.Since(started), err)
+	return result, err
+}
+
 func (s *Service) nextPeerOffset(n int) int {
 	if n <= 1 {
 		return 0
