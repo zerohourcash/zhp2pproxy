@@ -20,9 +20,20 @@ var version = "dev"
 func main() {
 	configPath := flag.String("config", "", "path to proxy.json; default: executable dir, cwd, then user config dir")
 	showVersion := flag.Bool("version", false, "print version and exit")
+	registerAutostart := flag.Bool("register-autostart", false, "register visible console startup for the current Windows user")
+	unregisterAutostart := flag.Bool("unregister-autostart", false, "remove current Windows user autostart registration")
 	flag.Parse()
 	if *showVersion {
 		log.Printf("zhp2pproxy %s", version)
+		return
+	}
+	if *registerAutostart && *unregisterAutostart {
+		log.Fatal("-register-autostart and -unregister-autostart cannot be used together")
+	}
+	if *registerAutostart || *unregisterAutostart {
+		if err := handlePlatformAutostart(*configPath, *registerAutostart); err != nil {
+			log.Fatal(err)
+		}
 		return
 	}
 	if err := runPlatform(*configPath); err != nil {

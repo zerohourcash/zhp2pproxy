@@ -4,10 +4,15 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 )
+
+func handlePlatformAutostart(_ string, _ bool) error {
+	return fmt.Errorf("autostart registration is supported only on Windows")
+}
 
 func runPlatform(configPath string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

@@ -344,17 +344,11 @@ try {
     Expand-Archive -LiteralPath $archivePath -DestinationPath $unpackDir
     $packageExe = Join-Path $packageDir "zhp2pproxy.exe"
     $packageConfig = Join-Path $packageDir "proxy.install.json"
-    $packageTray = Join-Path $packageDir "zhp2pproxy-tray.ps1"
-    $packageControl = Join-Path $packageDir "zhp2pproxy-control.ps1"
     if (-not (Test-Path -LiteralPath $packageExe -PathType Leaf)) {
         throw "Archive does not contain zhp2pproxy.exe."
     }
     if (-not (Test-Path -LiteralPath $packageConfig -PathType Leaf)) {
         throw "Archive does not contain the safe config template."
-    }
-    if (-not (Test-Path -LiteralPath $packageTray -PathType Leaf) -or
-        -not (Test-Path -LiteralPath $packageControl -PathType Leaf)) {
-        throw "Archive does not contain the Windows status/control scripts."
     }
 
     $startupTaskName = "$ServiceName-Startup"
@@ -365,16 +359,24 @@ try {
         $null
     }
     if ($existingTask -and $existingTask.State -eq "Running") {
-        Write-InstallLog "Stopping existing startup task"
+        Write-InstallLog "Stopping legacy background startup task"
         Stop-ScheduledTask -TaskName $startupTaskName -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 1
+    }
+    if ($existingTask) {
+        Unregister-ScheduledTask -TaskName $startupTaskName -Confirm:$false
+        Write-InstallLog "Removed legacy background startup task"
     }
 
     $existingService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
     if ($existingService -and $existingService.Status -ne "Stopped") {
-        Write-InstallLog "Stopping existing service"
+        Write-InstallLog "Stopping legacy background service"
         Stop-Service -Name $ServiceName -Force
         (Get-Service -Name $ServiceName).WaitForStatus("Stopped", [TimeSpan]::FromSeconds(20))
+    }
+    if ($existingService) {
+        Set-Service -Name $ServiceName -StartupType Disabled
+        Write-InstallLog "Disabled legacy background service in favor of visible console mode"
     }
 
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
@@ -383,14 +385,31 @@ try {
     $installedTray = Join-Path $InstallDir "zhp2pproxy-tray.ps1"
     $installedControl = Join-Path $InstallDir "zhp2pproxy-control.ps1"
     Stop-ExistingProxyTray -TrayScript $installedTray
+    $existingConsoleProcesses = Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+        $_.Name -eq "zhp2pproxy.exe" -and $_.ExecutablePath -and
+        $_.ExecutablePath.Equals($installedExe, [StringComparison]::OrdinalIgnoreCase)
+    }
+    foreach ($process in $existingConsoleProcesses) {
+        Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+    if ($existingConsoleProcesses) {
+        Start-Sleep -Milliseconds 500
+    }
     if (Test-Path -LiteralPath $installedExe -PathType Leaf) {
         Copy-Item -LiteralPath $installedExe -Destination (Join-Path $InstallDir "zhp2pproxy.previous.exe") -Force
     }
     Copy-Item -LiteralPath $packageExe -Destination $installedExe -Force
     Copy-Item -LiteralPath (Join-Path $packageDir "README.md") -Destination (Join-Path $InstallDir "README.md") -Force
     Copy-Item -LiteralPath $packageConfig -Destination (Join-Path $InstallDir "proxy.example.json") -Force
-    Copy-Item -LiteralPath $packageTray -Destination $installedTray -Force
-    Copy-Item -LiteralPath $packageControl -Destination $installedControl -Force
+    foreach ($legacyUIFile in @($installedTray, $installedControl)) {
+        if (Test-Path -LiteralPath $legacyUIFile -PathType Leaf) {
+            Remove-Item -LiteralPath $legacyUIFile -Force
+        }
+    }
+    $legacyTrayShortcut = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::Startup)) "ZHP2PProxy Status.lnk"
+    if (Test-Path -LiteralPath $legacyTrayShortcut -PathType Leaf) {
+        Remove-Item -LiteralPath $legacyTrayShortcut -Force
+    }
 
     if (-not (Test-Path -LiteralPath $installedConfig -PathType Leaf)) {
         $config = Get-Content -Raw -LiteralPath $packageConfig | ConvertFrom-Json
@@ -411,72 +430,28 @@ try {
         throw "The installed executable did not pass its version check."
     }
 
-    # The service runs as LocalSystem and needs write access for identity.key and peers.json.
-    & icacls.exe $InstallDir /grant "*S-1-5-18:(OI)(CI)F" /T /Q | Out-Null
+    & $installedExe -register-autostart -config $installedConfig
     if ($LASTEXITCODE -ne 0) {
-        throw "Could not grant the Windows service access to $InstallDir."
+        throw "The executable could not register current-user Windows autostart."
+    }
+    $runKey = Get-ItemProperty -LiteralPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "ZHP2PProxy"
+    $expectedRunCommand = ('"{0}" -config "{1}"' -f $installedExe, $installedConfig)
+    if ($runKey.ZHP2PProxy -ne $expectedRunCommand) {
+        throw "Windows autostart verification failed. Stored command: $($runKey.ZHP2PProxy)"
     }
 
-    $binaryPath = ('"{0}" -config "{1}"' -f $installedExe, $installedConfig)
-    $startupMode = "service"
-    $startupName = $ServiceName
-    try {
-        Install-ProxyWindowsService -Name $ServiceName -BinaryPath $binaryPath
-
-        # Recovery settings are useful but not required for registration. Preserve
-        # their exact output when Windows rejects a particular recovery option.
-        $recoveryOutput = & sc.exe failure $ServiceName "reset= 86400" "actions= restart/5000/restart/5000/restart/5000" 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warning "Service recovery policy was not applied (sc.exe exit $LASTEXITCODE): $($recoveryOutput -join ' ')"
+    $consoleProcess = Start-Process -FilePath $installedExe `
+        -ArgumentList ('-config "{0}"' -f $installedConfig) `
+        -WorkingDirectory $InstallDir -WindowStyle Normal -PassThru
+    Start-Sleep -Seconds 2
+    if ($consoleProcess.HasExited) {
+        $proxyLogPath = Join-Path $InstallDir "zhp2pproxy.log"
+        $logTail = if (Test-Path -LiteralPath $proxyLogPath -PathType Leaf) {
+            (Get-Content -LiteralPath $proxyLogPath -Tail 25) -join [Environment]::NewLine
+        } else {
+            "no log file was created"
         }
-
-        if ($taskSchedulerAvailable -and (Get-ScheduledTask -TaskName $startupTaskName -ErrorAction SilentlyContinue)) {
-            Unregister-ScheduledTask -TaskName $startupTaskName -Confirm:$false
-        }
-        Start-Service -Name $ServiceName -ErrorAction Stop
-        $service = Get-Service -Name $ServiceName
-        $service.WaitForStatus("Running", [TimeSpan]::FromSeconds(30))
-        if ($service.Status -ne "Running") {
-            throw "Windows service $ServiceName did not become active."
-        }
-    } catch {
-        $serviceInstallError = $_.Exception.Message
-        Write-Warning "Windows service registration/start failed: $serviceInstallError"
-        Write-InstallLog "Installing an AtStartup Scheduled Task fallback under LocalSystem"
-        if (-not $taskSchedulerAvailable) {
-            throw "Service setup failed: $serviceInstallError$([Environment]::NewLine)Scheduled Task cmdlets are unavailable on this Windows installation."
-        }
-        $partialService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-        if ($partialService) {
-            if ($partialService.Status -ne "Stopped") {
-                Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
-            }
-            Set-Service -Name $ServiceName -StartupType Disabled -ErrorAction SilentlyContinue
-        }
-        try {
-            Install-ProxyStartupTask -TaskName $startupTaskName -Executable $installedExe -ConfigPath $installedConfig
-            Start-ScheduledTask -TaskName $startupTaskName -ErrorAction Stop
-            $startupMode = "task"
-            $startupName = $startupTaskName
-            Start-Sleep -Seconds 2
-        } catch {
-            throw "Service setup failed: $serviceInstallError$([Environment]::NewLine)Scheduled Task fallback also failed: $($_.Exception.Message)"
-        }
-    }
-
-    $proxyLogPath = Join-Path $InstallDir "zhp2pproxy.log"
-    try {
-        $probe = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:8081/health" -TimeoutSec 2
-    } catch {
-        $probe = $null
-    }
-    if (-not $probe) {
-        Start-Sleep -Seconds 2
-        $process = Get-Process -Name "zhp2pproxy" -ErrorAction SilentlyContinue
-        if (-not $process) {
-            $diagnostics = Get-ProxyStartupDiagnostics -Mode $startupMode -Name $startupName -LogPath $proxyLogPath
-            throw "Autostart was registered, but zhp2pproxy exited before its health endpoint became available.$([Environment]::NewLine)$diagnostics"
-        }
+        throw "The visible proxy console exited immediately.$([Environment]::NewLine)$logTail"
     }
 
     $runtimeConfig = Get-Content -Raw -LiteralPath $installedConfig | ConvertFrom-Json
@@ -556,20 +531,12 @@ try {
         }
     }
 
-    if ($startupMode -eq "service") {
-        Write-InstallLog "Windows service is running with Automatic (Delayed Start)"
-        Write-InstallLog "Autostart verified: Win32_Service StartMode=Auto and DelayedAutostart=1"
-    } else {
-        Write-InstallLog "Scheduled Task fallback is running under LocalSystem and starts at Windows boot"
-        Write-InstallLog "Autostart verified: $startupTaskName has an AtStartup trigger"
-    }
+    Write-InstallLog "Visible zhp2pproxy.exe console is running"
+    Write-InstallLog "Autostart verified in HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
     Write-InstallLog "Installation directory: $InstallDir"
     Write-InstallLog "Config: $installedConfig"
-    if ($startupMode -eq "service") {
-        Write-InstallLog "Status: Get-Service $ServiceName"
-    } else {
-        Write-InstallLog "Status: Get-ScheduledTask '$startupTaskName'; Get-ScheduledTaskInfo '$startupTaskName'"
-    }
+    Write-InstallLog "Stop now: close the proxy console window or press Ctrl+C"
+    Write-InstallLog "Disable autostart: & '$installedExe' -unregister-autostart"
     Write-InstallLog "Logs: Get-Content -Wait $(Join-Path $InstallDir 'zhp2pproxy.log')"
     Write-InstallLog "Local API: $localApiBase/info"
     Write-InstallLog "For a public relay, allow inbound TCP and UDP 10001 in Windows Firewall"
@@ -592,33 +559,8 @@ try {
         Write-Warning "Health endpoint did not answer. Inspect $(Join-Path $InstallDir 'zhp2pproxy.log')"
     }
     if ($minimalConfigWritten) {
-        if ($startupMode -eq "service") {
-            Write-Warning "A minimal local RPC config was created. Restart the ZHCASH node, then run: Restart-Service $ServiceName"
-        } else {
-            Write-Warning "A minimal local RPC config was created. Restart the ZHCASH node, then run: Stop-ScheduledTask '$startupTaskName'; Start-ScheduledTask '$startupTaskName'"
-        }
+        Write-Warning "A minimal local RPC config was created. Restart the ZHCASH node, then close and reopen zhp2pproxy.exe."
     }
-
-    $trayShortcut = Install-ProxyTrayStartup -TrayScript $installedTray -ConfigPath $installedConfig
-    $powerShellPath = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
-    $trayArguments = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -ConfigPath "{1}" -ShowWindow' -f $installedTray, $installedConfig
-    Start-Process -FilePath $powerShellPath -ArgumentList $trayArguments
-    Start-Sleep -Seconds 2
-    $trayProcess = Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue | Where-Object {
-        ($_.Name -eq "powershell.exe" -or $_.Name -eq "pwsh.exe") -and
-        $_.CommandLine -and $_.CommandLine.IndexOf($installedTray, [StringComparison]::OrdinalIgnoreCase) -ge 0
-    } | Select-Object -First 1
-    if (-not $trayProcess) {
-        $trayErrorLog = Join-Path $InstallDir "zhp2pproxy-tray-error.log"
-        $trayError = if (Test-Path -LiteralPath $trayErrorLog -PathType Leaf) {
-            (Get-Content -LiteralPath $trayErrorLog -Tail 10) -join [Environment]::NewLine
-        } else {
-            "no tray error log was created"
-        }
-        throw "The visible tray indicator did not remain running. $trayError"
-    }
-    Write-InstallLog "Visible tray indicator is running and opens automatically at user logon"
-    Write-InstallLog "Tray autostart: $trayShortcut"
 } finally {
     if (Test-Path -LiteralPath $tempDir) {
         Remove-Item -LiteralPath $tempDir -Recurse -Force

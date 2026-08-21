@@ -55,48 +55,36 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
 ```
 
 Установщик скачивает архив только по HTTPS, сверяет SHA-256, устанавливает
-файлы в `%USERPROFILE%\zhp2pproxy` и создает службу `ZHP2PProxy` с отложенным
-автозапуском. Служба регистрируется через Windows Service API, поэтому пути с
-пробелами не ломаются из-за правил разбора аргументов `sc.exe`. Если создание
-службы запрещено локальной политикой Windows, установщик автоматически создает
-резервное задание `ZHP2PProxy-Startup`: оно запускается от `LocalSystem` при
-старте Windows, перезапускается после сбоя и пишет в тот же лог. При обновлении
-сохраняются `proxy.json`, `identity.key` и
-`peers.json`, а предыдущий бинарник остается как
-`zhp2pproxy.previous.exe`. Если найден
-`%APPDATA%\ZHCASH\zerohour.conf`, его абсолютный путь записывается в новый
-конфиг, потому что служба работает от `LocalSystem`.
+файлы в `%USERPROFILE%\zhp2pproxy` и запускает сам
+`zhp2pproxy.exe` в обычном видимом окне консоли. EXE регистрирует точную команду
+с абсолютными путями в
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, поэтому proxy снова
+открывается после входа текущего пользователя в Windows. Старые служба
+`ZHP2PProxy`, background task и tray-индикатор останавливаются и отключаются,
+чтобы одновременно не работали две копии на одном порту.
 
-После установки открывается отдельное видимое окно состояния и появляется
-цветной значок в системном трее. Зеленый означает, что есть P2P peers и реальный
-`getblockcount` через proxy; желтый — процесс работает, но маршрут ограничен или
-сеть еще подключается; красный — локальный proxy не отвечает. Окно показывает
-число peers, высоту блока через proxy, состояние локальной ноды и тип
-автозапуска. Индикатор автоматически запускается при входе текущего пользователя
-через ярлык `ZHP2PProxy Status` в папке Startup и показывает системное
-уведомление, поэтому proxy не работает полностью незаметно в фоне.
-
-Меню значка содержит `Start proxy`, `Restart proxy` и `Stop proxy`. Остановка
-proxy требует подтверждения и стандартного Windows UAC; `Exit indicator`
-закрывает только визуальный индикатор и не останавливает proxy. Также из меню
-можно открыть подробный статус, папку установки и текущий лог.
+В консоли в реальном времени видны загрузка конфига, локальная RPC-нода,
+подключение P2P peers, HTTP listener, ошибки и штатная остановка. Тот же вывод
+дублируется в `%USERPROFILE%\zhp2pproxy\zhp2pproxy.log`. Закрытие окна или
+`Ctrl+C` завершает proxy; при следующем входе в Windows он запустится снова.
+При обновлении сохраняются `proxy.json`, `identity.key` и `peers.json`, а
+предыдущий бинарник остается как `zhp2pproxy.previous.exe`.
 
 Проверка и управление:
 
 ```powershell
-Get-Service ZHP2PProxy
-Restart-Service ZHP2PProxy
+Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" ZHP2PProxy
 Get-Content -Wait "$env:USERPROFILE\zhp2pproxy\zhp2pproxy.log"
 Invoke-RestMethod http://127.0.0.1:8081/info
 Invoke-RestMethod http://127.0.0.1:8081/health
 ```
 
-Если был задействован резервный автозапуск через Планировщик заданий:
+Отключить автозапуск можно самим EXE; включить обратно можно аналогично:
 
 ```powershell
-Get-ScheduledTask ZHP2PProxy-Startup
-Get-ScheduledTaskInfo ZHP2PProxy-Startup
-Start-ScheduledTask ZHP2PProxy-Startup
+& "$env:USERPROFILE\zhp2pproxy\zhp2pproxy.exe" -unregister-autostart
+& "$env:USERPROFILE\zhp2pproxy\zhp2pproxy.exe" -register-autostart `
+  -config "$env:USERPROFILE\zhp2pproxy\proxy.json"
 ```
 
 `/health` отдельно показывает связь с локальной ZHCASH RPC-нодой и с P2P
@@ -104,10 +92,9 @@ overlay. Локальная нода необязательна: при отсу
 может выполнять разрешенные RPC-вызовы через подключенные P2P peers.
 Windows-установщик ждет подключения к overlay и выполняет настоящий
 `getblockcount` через локальный HTTP endpoint proxy. Поэтому итоговая
-диагностика проверяет регистрацию автозапуска, живой процесс, `/health`, P2P
-peers и настоящий рабочий маршрут `getblockcount` до сети. Если служба не может
-запуститься, установщик выводит ее state/exit code и последние строки
-`zhp2pproxy.log`, а не скрывает первичную ошибку Windows.
+диагностика проверяет запись HKCU Run, живой консольный процесс, `/health`, P2P
+peers и настоящий рабочий маршрут `getblockcount` до сети. Если EXE сразу
+завершается, установщик показывает последние строки `zhp2pproxy.log`.
 
 Если локальный процесс ZHCASH или его стандартный конфиг обнаружен, но прямой
 RPC не отвечает, установщик применяет последний fallback: сохраняет исходный
@@ -116,7 +103,7 @@ RPC-параметры и записывает новый минимальный
 паролем и доступом только через `127.0.0.1:3889`. Существующий managed-блок
 повторно не меняется. Это единственный случай, когда установщик задает вопрос в
 консоли; без подтверждения файлы не меняются. После этого нужно перезапустить
-ZHCASH-ноду, затем службу `ZHP2PProxy`. Если ни процесса, ни конфига локальной
+ZHCASH-ноду, затем закрыть и снова открыть `zhp2pproxy.exe`. Если ни процесса, ни конфига локальной
 ноды нет, установщик ничего не создает: это штатный P2P-only режим. Для
 автоматической установки поведение можно явно выбрать параметром
 `-NodeConfigRepair Apply` или `-NodeConfigRepair Skip`.
