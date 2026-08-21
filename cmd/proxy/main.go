@@ -171,7 +171,7 @@ func monitorLocalNode(ctx context.Context, configPath string, cfg config.Config,
 			}
 			continue
 		}
-		recoveryAttempted = true
+		recoveryAttempted = repairErr == nil
 		cfg = recovery.Config
 		local.Update(cfg)
 		if recovery.NodeConfigChanged {

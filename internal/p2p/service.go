@@ -538,6 +538,8 @@ func (s *Service) handleNodeP2PStream(st network.Stream) {
 
 func (s *Service) connectCachedAndBootstrap(ctx context.Context) error {
 	var errs []error
+	byID := make(map[peer.ID]*peer.AddrInfo)
+	var order []peer.ID
 	for _, text := range s.bootstrapPeerList(ctx) {
 		info, err := addrInfo(text)
 		if err != nil {
@@ -547,8 +549,19 @@ func (s *Service) connectCachedAndBootstrap(ctx context.Context) error {
 		if info.ID == s.host.ID() {
 			continue
 		}
+		if existing := byID[info.ID]; existing != nil {
+			existing.Addrs = appendUniqueMultiaddrs(existing.Addrs, info.Addrs...)
+			continue
+		}
+		copyInfo := *info
+		copyInfo.Addrs = appendUniqueMultiaddrs(nil, info.Addrs...)
+		byID[info.ID] = &copyInfo
+		order = append(order, info.ID)
+	}
+	for _, id := range order {
+		info := byID[id]
 		connectCtx, cancel := context.WithTimeout(ctx, bootstrapTimeout)
-		err = s.host.Connect(connectCtx, *info)
+		err := s.host.Connect(connectCtx, *info)
 		cancel()
 		if err != nil {
 			errs = append(errs, err)
@@ -557,6 +570,21 @@ func (s *Service) connectCachedAndBootstrap(ctx context.Context) error {
 		log.Printf("[p2p] connected to %s", info.ID)
 	}
 	return errors.Join(errs...)
+}
+
+func appendUniqueMultiaddrs(existing []ma.Multiaddr, additions ...ma.Multiaddr) []ma.Multiaddr {
+	seen := make(map[string]struct{}, len(existing)+len(additions))
+	for _, addr := range existing {
+		seen[addr.String()] = struct{}{}
+	}
+	for _, addr := range additions {
+		if _, ok := seen[addr.String()]; ok {
+			continue
+		}
+		seen[addr.String()] = struct{}{}
+		existing = append(existing, addr)
+	}
+	return existing
 }
 
 func (s *Service) bootstrapPeerList(ctx context.Context) []string {
@@ -767,6 +795,9 @@ func (s *Service) handlePeerAnnounce(ctx context.Context, ann peerAnnounce) {
 	}
 	id, err := peer.Decode(ann.PeerID)
 	if err != nil {
+		return
+	}
+	if s.host.Network().Connectedness(id) == network.Connected {
 		return
 	}
 	info := peer.AddrInfo{ID: id}

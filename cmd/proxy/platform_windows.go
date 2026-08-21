@@ -27,6 +27,15 @@ import (
 const windowsServiceName = "ZHP2PProxy"
 const windowsAutostartValue = "ZHP2PProxy"
 
+const wmQueryEndSession = 0x0011
+
+var (
+	user32                    = windows.NewLazySystemDLL("user32.dll")
+	procEnumWindows           = user32.NewProc("EnumWindows")
+	procGetWindowThreadProcID = user32.NewProc("GetWindowThreadProcessId")
+	procPostMessageW          = user32.NewProc("PostMessageW")
+)
+
 func handlePlatformAutostart(configPath string, register bool) error {
 	key, err := registry.OpenKey(
 		registry.CURRENT_USER,
@@ -300,18 +309,18 @@ func restartWindowsNodeProcesses(processes []windowsNodeProcess) ([]string, erro
 		if err != nil {
 			return restarted, fmt.Errorf("open %s process %d for restart: %w", process.Name, process.PID, err)
 		}
-		output, stopErr := exec.Command("taskkill.exe", "/PID", strconv.FormatUint(uint64(process.PID), 10)).CombinedOutput()
+		stopErr := requestWindowsNodeStop(process)
 		if stopErr != nil {
 			windows.CloseHandle(handle)
-			return restarted, fmt.Errorf("stop %s process %d: %w (%s)", process.Name, process.PID, stopErr, strings.TrimSpace(string(output)))
+			return restarted, stopErr
 		}
-		waitResult, waitErr := windows.WaitForSingleObject(handle, 30_000)
+		waitResult, waitErr := windows.WaitForSingleObject(handle, 180_000)
 		windows.CloseHandle(handle)
 		if waitErr != nil {
 			return restarted, fmt.Errorf("wait for %s process %d: %w", process.Name, process.PID, waitErr)
 		}
 		if waitResult != windows.WAIT_OBJECT_0 {
-			return restarted, fmt.Errorf("%s process %d did not stop safely within 30 seconds", process.Name, process.PID)
+			return restarted, fmt.Errorf("%s process %d did not stop safely within 3 minutes", process.Name, process.PID)
 		}
 		command := exec.Command(process.Path)
 		command.Dir = filepath.Dir(process.Path)
@@ -322,6 +331,43 @@ func restartWindowsNodeProcesses(processes []windowsNodeProcess) ([]string, erro
 		restarted = append(restarted, process.Path)
 	}
 	return restarted, nil
+}
+
+func requestWindowsNodeStop(process windowsNodeProcess) error {
+	if process.Name == "zerohour-qt.exe" || process.Name == "zhcash-qt.exe" {
+		sent, err := postQueryEndSession(process.PID)
+		if err != nil {
+			return fmt.Errorf("request graceful shutdown of %s process %d: %w", process.Name, process.PID, err)
+		}
+		if sent {
+			return nil
+		}
+	}
+	output, err := exec.Command("taskkill.exe", "/PID", strconv.FormatUint(uint64(process.PID), 10)).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("stop %s process %d: %w (%s)", process.Name, process.PID, err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func postQueryEndSession(pid uint32) (bool, error) {
+	sent := false
+	callback := syscall.NewCallback(func(window uintptr, _ uintptr) uintptr {
+		var windowPID uint32
+		procGetWindowThreadProcID.Call(window, uintptr(unsafe.Pointer(&windowPID)))
+		if windowPID == pid {
+			result, _, _ := procPostMessageW.Call(window, wmQueryEndSession, 0, 0)
+			if result != 0 {
+				sent = true
+			}
+		}
+		return 1
+	})
+	result, _, callErr := procEnumWindows.Call(callback, 0)
+	if result == 0 && callErr != nil && callErr != syscall.Errno(0) {
+		return sent, callErr
+	}
+	return sent, nil
 }
 
 type windowsService struct {
