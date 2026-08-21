@@ -27,6 +27,15 @@ func runPlatform(configPath string) error {
 		return svc.Run(windowsServiceName, &windowsService{configPath: configPath})
 	}
 
+	// A Scheduled Task is used as a fallback on Windows installations where
+	// Service Control Manager registration is blocked by policy. Keep the same
+	// persistent log in that mode instead of losing stdout/stderr at boot.
+	closeLog, err := configureWindowsServiceLog(configPath)
+	if err != nil {
+		return err
+	}
+	defer closeLog()
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	return runProxy(ctx, configPath)

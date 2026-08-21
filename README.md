@@ -56,7 +56,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
 
 Установщик скачивает архив только по HTTPS, сверяет SHA-256, устанавливает
 файлы в `%USERPROFILE%\zhp2pproxy` и создает службу `ZHP2PProxy` с отложенным
-автозапуском. При обновлении сохраняются `proxy.json`, `identity.key` и
+автозапуском. Служба регистрируется через Windows Service API, поэтому пути с
+пробелами не ломаются из-за правил разбора аргументов `sc.exe`. Если создание
+службы запрещено локальной политикой Windows, установщик автоматически создает
+резервное задание `ZHP2PProxy-Startup`: оно запускается от `LocalSystem` при
+старте Windows, перезапускается после сбоя и пишет в тот же лог. При обновлении
+сохраняются `proxy.json`, `identity.key` и
 `peers.json`, а предыдущий бинарник остается как
 `zhp2pproxy.previous.exe`. Если найден
 `%APPDATA%\ZHCASH\zerohour.conf`, его абсолютный путь записывается в новый
@@ -72,12 +77,23 @@ Invoke-RestMethod http://127.0.0.1:8081/info
 Invoke-RestMethod http://127.0.0.1:8081/health
 ```
 
+Если был задействован резервный автозапуск через Планировщик заданий:
+
+```powershell
+Get-ScheduledTask ZHP2PProxy-Startup
+Get-ScheduledTaskInfo ZHP2PProxy-Startup
+Start-ScheduledTask ZHP2PProxy-Startup
+```
+
 `/health` отдельно показывает связь с локальной ZHCASH RPC-нодой и с P2P
 overlay. Локальная нода необязательна: при отсутствии `zerohour.conf` proxy
 может выполнять разрешенные RPC-вызовы через подключенные P2P peers.
 Windows-установщик ждет подключения к overlay и выполняет настоящий
 `getblockcount` через локальный HTTP endpoint proxy. Поэтому итоговая
-диагностика проверяет не только статус службы, но и рабочий маршрут до сети.
+диагностика проверяет регистрацию автозапуска, живой процесс, `/health`, P2P
+peers и настоящий рабочий маршрут `getblockcount` до сети. Если служба не может
+запуститься, установщик выводит ее state/exit code и последние строки
+`zhp2pproxy.log`, а не скрывает первичную ошибку Windows.
 
 Если локальный процесс ZHCASH или его стандартный конфиг обнаружен, но прямой
 RPC не отвечает, установщик применяет последний fallback: сохраняет исходный

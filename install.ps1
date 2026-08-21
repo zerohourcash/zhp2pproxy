@@ -24,6 +24,149 @@ function Assert-Administrator {
     }
 }
 
+function Get-WindowsServiceResultMessage {
+    param([int]$Code)
+
+    $messages = @{
+        0 = "success"
+        1 = "not supported"
+        2 = "access denied"
+        3 = "dependent services are running"
+        4 = "invalid service control"
+        5 = "service cannot accept control"
+        6 = "service is not active"
+        7 = "service request timed out"
+        8 = "unknown failure"
+        9 = "executable path was not found"
+        10 = "service is already running"
+        11 = "service database is locked"
+        12 = "a service dependency was deleted"
+        13 = "a service dependency failed"
+        14 = "service is disabled"
+        15 = "service logon failed"
+        16 = "service is marked for deletion; reboot Windows and retry"
+        17 = "service has no execution thread"
+        18 = "circular service dependency"
+        19 = "duplicate service name"
+        20 = "invalid service name"
+        21 = "invalid service parameter"
+        22 = "invalid service account"
+        23 = "service already exists"
+        24 = "service is already paused"
+    }
+    if ($messages.ContainsKey($Code)) {
+        return $messages[$Code]
+    }
+    return "unrecognized Windows service error"
+}
+
+function Install-ProxyWindowsService {
+    param(
+        [string]$Name,
+        [string]$BinaryPath
+    )
+
+    if ($Name -notmatch "^[A-Za-z0-9_.-]+$") {
+        throw "Invalid Windows service name: $Name"
+    }
+    $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='$Name'" -ErrorAction SilentlyContinue
+    if ($service) {
+        $result = Invoke-CimMethod -InputObject $service -MethodName Change -Arguments @{
+            DisplayName = "ZHP2PProxy"
+            PathName = $BinaryPath
+            StartMode = "Automatic"
+        }
+        if ([int]$result.ReturnValue -ne 0) {
+            $description = Get-WindowsServiceResultMessage -Code ([int]$result.ReturnValue)
+            throw "Win32_Service.Change failed with code $($result.ReturnValue): $description. Binary path: $BinaryPath"
+        }
+    } else {
+        try {
+            New-Service -Name $Name -BinaryPathName $BinaryPath `
+                -DisplayName "ZHP2PProxy" -Description "ZHCASH decentralized RPC and native P2P proxy" `
+                -StartupType Automatic -ErrorAction Stop | Out-Null
+        } catch {
+            throw "New-Service failed: $($_.Exception.Message). Binary path: $BinaryPath"
+        }
+    }
+
+    # Automatic startup is the essential setting. DelayedAutoStart makes boot less
+    # fragile when networking is not ready yet, and does not depend on sc.exe parsing.
+    $serviceRegistryPath = "HKLM:\SYSTEM\CurrentControlSet\Services\$Name"
+    Set-Service -Name $Name -StartupType Automatic
+    New-ItemProperty -LiteralPath $serviceRegistryPath -Name DelayedAutostart `
+        -PropertyType DWord -Value 1 -Force | Out-Null
+    New-ItemProperty -LiteralPath $serviceRegistryPath -Name Description `
+        -PropertyType String -Value "ZHCASH decentralized RPC and native P2P proxy" -Force | Out-Null
+
+    $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='$Name'" -ErrorAction Stop
+    $delayedAutoStart = (Get-ItemProperty -LiteralPath $serviceRegistryPath -Name DelayedAutostart).DelayedAutostart
+    if ($service.StartMode -ne "Auto" -or $service.PathName -ne $BinaryPath -or $delayedAutoStart -ne 1) {
+        throw "Windows service verification failed. StartMode=$($service.StartMode); DelayedAutoStart=$delayedAutoStart; PathName=$($service.PathName)"
+    }
+}
+
+function Install-ProxyStartupTask {
+    param(
+        [string]$TaskName,
+        [string]$Executable,
+        [string]$ConfigPath
+    )
+
+    $action = New-ScheduledTaskAction -Execute $Executable -Argument ('-config "{0}"' -f $ConfigPath)
+    $trigger = New-ScheduledTaskTrigger -AtStartup
+    $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
+        -RestartCount 5 -RestartInterval (New-TimeSpan -Minutes 1) `
+        -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
+        -Principal $principal -Settings $settings -Description "ZHP2PProxy startup fallback" `
+        -Force -ErrorAction Stop | Out-Null
+
+    $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+    $hasBootTrigger = $task.Triggers | Where-Object { $_.CimClass.CimClassName -eq "MSFT_TaskBootTrigger" }
+    $hasExpectedAction = $task.Actions | Where-Object {
+        $_.Execute -eq $Executable -and $_.Arguments -eq ('-config "{0}"' -f $ConfigPath)
+    }
+    if (-not $task -or -not $hasBootTrigger -or -not $hasExpectedAction -or $task.Principal.UserId -notmatch "(?i)(SYSTEM|S-1-5-18)") {
+        throw "Scheduled Task $TaskName verification failed: expected LocalSystem, AtStartup and the installed executable."
+    }
+}
+
+function Get-ProxyStartupDiagnostics {
+    param(
+        [string]$Mode,
+        [string]$Name,
+        [string]$LogPath
+    )
+
+    $details = @()
+    if ($Mode -eq "service") {
+        $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='$Name'" -ErrorAction SilentlyContinue
+        if ($service) {
+            $details += "service state=$($service.State), startMode=$($service.StartMode), exitCode=$($service.ExitCode), serviceExitCode=$($service.ServiceSpecificExitCode)"
+        } else {
+            $details += "service is not registered"
+        }
+    } else {
+        $task = Get-ScheduledTask -TaskName $Name -ErrorAction SilentlyContinue
+        $taskInfo = Get-ScheduledTaskInfo -TaskName $Name -ErrorAction SilentlyContinue
+        if ($task) {
+            $lastTaskResult = if ($taskInfo) { $taskInfo.LastTaskResult } else { "unavailable" }
+            $details += "scheduled task state=$($task.State), lastResult=$lastTaskResult"
+        } else {
+            $details += "scheduled task is not registered"
+        }
+    }
+    if (Test-Path -LiteralPath $LogPath -PathType Leaf) {
+        $tail = (Get-Content -LiteralPath $LogPath -Tail 25 -ErrorAction SilentlyContinue) -join [Environment]::NewLine
+        if ($tail) {
+            $details += "last proxy log lines:$([Environment]::NewLine)$tail"
+        }
+    }
+    return ($details -join [Environment]::NewLine)
+}
+
 function Resolve-Architecture {
     $architecture = $env:PROCESSOR_ARCHITECTURE
     if ($env:PROCESSOR_ARCHITEW6432) {
@@ -105,6 +248,9 @@ function Set-MinimalZHCashRpcFallback {
 }
 
 Assert-Administrator
+if ($ServiceName -ne "ZHP2PProxy") {
+    throw "This binary uses the fixed Windows service name ZHP2PProxy; custom ServiceName values are not supported."
+}
 $baseUri = [Uri]$BaseUrl
 if ($baseUri.Scheme -ne "https") {
     throw "Download base URL must use HTTPS."
@@ -156,6 +302,19 @@ try {
         throw "Archive does not contain the safe config template."
     }
 
+    $startupTaskName = "$ServiceName-Startup"
+    $taskSchedulerAvailable = [bool](Get-Command Get-ScheduledTask -ErrorAction SilentlyContinue)
+    $existingTask = if ($taskSchedulerAvailable) {
+        Get-ScheduledTask -TaskName $startupTaskName -ErrorAction SilentlyContinue
+    } else {
+        $null
+    }
+    if ($existingTask -and $existingTask.State -eq "Running") {
+        Write-InstallLog "Stopping existing startup task"
+        Stop-ScheduledTask -TaskName $startupTaskName -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 1
+    }
+
     $existingService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
     if ($existingService -and $existingService.Status -ne "Stopped") {
         Write-InstallLog "Stopping existing service"
@@ -199,22 +358,65 @@ try {
     }
 
     $binaryPath = ('"{0}" -config "{1}"' -f $installedExe, $installedConfig)
-    if ($existingService) {
-        & sc.exe config $ServiceName "binPath= $binaryPath" "start= delayed-auto" | Out-Null
-    } else {
-        & sc.exe create $ServiceName "binPath= $binaryPath" "start= delayed-auto" "DisplayName= ZHP2PProxy" | Out-Null
-    }
-    if ($LASTEXITCODE -ne 0) {
-        throw "Could not create or update Windows service $ServiceName."
-    }
-    & sc.exe description $ServiceName "ZHCASH decentralized RPC and native P2P proxy" | Out-Null
-    & sc.exe failure $ServiceName "reset= 86400" "actions= restart/5000/restart/5000/restart/5000" | Out-Null
+    $startupMode = "service"
+    $startupName = $ServiceName
+    try {
+        Install-ProxyWindowsService -Name $ServiceName -BinaryPath $binaryPath
 
-    Start-Service -Name $ServiceName
-    $service = Get-Service -Name $ServiceName
-    $service.WaitForStatus("Running", [TimeSpan]::FromSeconds(30))
-    if ($service.Status -ne "Running") {
-        throw "Windows service $ServiceName did not become active."
+        # Recovery settings are useful but not required for registration. Preserve
+        # their exact output when Windows rejects a particular recovery option.
+        $recoveryOutput = & sc.exe failure $ServiceName "reset= 86400" "actions= restart/5000/restart/5000/restart/5000" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Service recovery policy was not applied (sc.exe exit $LASTEXITCODE): $($recoveryOutput -join ' ')"
+        }
+
+        if ($taskSchedulerAvailable -and (Get-ScheduledTask -TaskName $startupTaskName -ErrorAction SilentlyContinue)) {
+            Unregister-ScheduledTask -TaskName $startupTaskName -Confirm:$false
+        }
+        Start-Service -Name $ServiceName -ErrorAction Stop
+        $service = Get-Service -Name $ServiceName
+        $service.WaitForStatus("Running", [TimeSpan]::FromSeconds(30))
+        if ($service.Status -ne "Running") {
+            throw "Windows service $ServiceName did not become active."
+        }
+    } catch {
+        $serviceInstallError = $_.Exception.Message
+        Write-Warning "Windows service registration/start failed: $serviceInstallError"
+        Write-InstallLog "Installing an AtStartup Scheduled Task fallback under LocalSystem"
+        if (-not $taskSchedulerAvailable) {
+            throw "Service setup failed: $serviceInstallError$([Environment]::NewLine)Scheduled Task cmdlets are unavailable on this Windows installation."
+        }
+        $partialService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+        if ($partialService) {
+            if ($partialService.Status -ne "Stopped") {
+                Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
+            }
+            Set-Service -Name $ServiceName -StartupType Disabled -ErrorAction SilentlyContinue
+        }
+        try {
+            Install-ProxyStartupTask -TaskName $startupTaskName -Executable $installedExe -ConfigPath $installedConfig
+            Start-ScheduledTask -TaskName $startupTaskName -ErrorAction Stop
+            $startupMode = "task"
+            $startupName = $startupTaskName
+            Start-Sleep -Seconds 2
+        } catch {
+            throw "Service setup failed: $serviceInstallError$([Environment]::NewLine)Scheduled Task fallback also failed: $($_.Exception.Message)"
+        }
+    }
+
+    $proxyLogPath = Join-Path $InstallDir "zhp2pproxy.log"
+    try {
+        $probe = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:8081/health" -TimeoutSec 2
+    } catch {
+        $probe = $null
+    }
+    if (-not $probe) {
+        Start-Sleep -Seconds 2
+        $process = Get-Process -Name "zhp2pproxy" -ErrorAction SilentlyContinue
+        if (-not $process) {
+            $diagnostics = Get-ProxyStartupDiagnostics -Mode $startupMode -Name $startupName -LogPath $proxyLogPath
+            throw "Autostart was registered, but zhp2pproxy exited before its health endpoint became available.$([Environment]::NewLine)$diagnostics"
+        }
     }
 
     $runtimeConfig = Get-Content -Raw -LiteralPath $installedConfig | ConvertFrom-Json
@@ -294,17 +496,27 @@ try {
         }
     }
 
-    Write-InstallLog "Service is running and starts automatically with Windows"
+    if ($startupMode -eq "service") {
+        Write-InstallLog "Windows service is running with Automatic (Delayed Start)"
+        Write-InstallLog "Autostart verified: Win32_Service StartMode=Auto and DelayedAutostart=1"
+    } else {
+        Write-InstallLog "Scheduled Task fallback is running under LocalSystem and starts at Windows boot"
+        Write-InstallLog "Autostart verified: $startupTaskName has an AtStartup trigger"
+    }
     Write-InstallLog "Installation directory: $InstallDir"
     Write-InstallLog "Config: $installedConfig"
-    Write-InstallLog "Status: Get-Service $ServiceName"
+    if ($startupMode -eq "service") {
+        Write-InstallLog "Status: Get-Service $ServiceName"
+    } else {
+        Write-InstallLog "Status: Get-ScheduledTask '$startupTaskName'; Get-ScheduledTaskInfo '$startupTaskName'"
+    }
     Write-InstallLog "Logs: Get-Content -Wait $(Join-Path $InstallDir 'zhp2pproxy.log')"
     Write-InstallLog "Local API: $localApiBase/info"
     Write-InstallLog "For a public relay, allow inbound TCP and UDP 10001 in Windows Firewall"
     if ($health -and $health.p2p_network.connected) {
         Write-InstallLog "P2P network connected: $($health.p2p_network.connected_peers) peer(s), peer ID $($health.p2p_network.peer_id)"
     } else {
-        Write-Warning "The service is running, but no P2P peer was connected during the startup check. $lastHealthError"
+        Write-Warning "ZHP2PProxy is running, but no P2P peer was connected during the startup check. $lastHealthError"
     }
     if ($health -and $health.local_node.connected) {
         Write-InstallLog "Local ZHCASH RPC connected at block $($health.local_node.block_height)"
@@ -320,7 +532,11 @@ try {
         Write-Warning "Health endpoint did not answer. Inspect $(Join-Path $InstallDir 'zhp2pproxy.log')"
     }
     if ($minimalConfigWritten) {
-        Write-Warning "A minimal local RPC config was created. Restart the ZHCASH node, then run: Restart-Service $ServiceName"
+        if ($startupMode -eq "service") {
+            Write-Warning "A minimal local RPC config was created. Restart the ZHCASH node, then run: Restart-Service $ServiceName"
+        } else {
+            Write-Warning "A minimal local RPC config was created. Restart the ZHCASH node, then run: Stop-ScheduledTask '$startupTaskName'; Start-ScheduledTask '$startupTaskName'"
+        }
     }
 } finally {
     if (Test-Path -LiteralPath $tempDir) {
