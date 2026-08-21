@@ -152,7 +152,11 @@ func (service *windowsService) Execute(
 
 func configureWindowsLog(configPath string, mirrorConsole bool) (func(), error) {
 	resolvedConfigPath := config.ResolvePath(configPath)
-	logPath := filepath.Join(filepath.Dir(resolvedConfigPath), "zhp2pproxy.log")
+	runtimeDir := filepath.Dir(resolvedConfigPath)
+	if err := os.MkdirAll(runtimeDir, 0700); err != nil {
+		return nil, fmt.Errorf("create Windows runtime directory %s: %w", runtimeDir, err)
+	}
+	logPath := filepath.Join(runtimeDir, "zhp2pproxy.log")
 	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("open service log %s: %w", logPath, err)
