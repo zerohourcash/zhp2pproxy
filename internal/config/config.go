@@ -17,6 +17,8 @@ import (
 const DefaultPath = "proxy.json"
 
 var executablePath = os.Executable
+var runtimeGOOS = runtime.GOOS
+var getenv = os.Getenv
 
 type Config struct {
 	Listen               string   `json:"listen"`
@@ -97,11 +99,17 @@ func Default() Config {
 
 func Load(path string) (Config, bool, error) {
 	path = ResolvePath(path)
+	if runtimeGOOS == "windows" {
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			if err := migrateLegacyWindowsState(path); err != nil {
+				return Config{}, false, fmt.Errorf("migrate legacy Windows proxy state: %w", err)
+			}
+		}
+	}
 	cfg := Default()
 	created := false
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		cfg.AdminToken = randomToken()
-		cfg.OverlayPSK = randomToken()
 		if err := Save(path, cfg); err != nil {
 			return cfg, false, fmt.Errorf("create default config: %w", err)
 		}
@@ -356,9 +364,9 @@ func readNodeConfig(path string) (map[string]string, error) {
 
 func defaultNodeConfigPath() string {
 	home, _ := os.UserHomeDir()
-	switch runtime.GOOS {
+	switch runtimeGOOS {
 	case "windows":
-		if appData := os.Getenv("APPDATA"); appData != "" {
+		if appData := getenv("APPDATA"); appData != "" {
 			return filepath.Join(appData, "ZHCASH", "zerohour.conf")
 		}
 	case "darwin":
@@ -369,6 +377,14 @@ func defaultNodeConfigPath() string {
 
 func defaultConfigCandidates() []string {
 	var candidates []string
+	// Windows executables are commonly launched from Downloads or moved between
+	// directories. Keep all runtime state beside the ZHCASH node data instead of
+	// creating proxy.json, peers.json and identity.key beside a transient EXE.
+	if runtimeGOOS == "windows" {
+		if appData := getenv("APPDATA"); appData != "" {
+			return []string{filepath.Join(appData, "ZHCASH", "zhp2pproxy", DefaultPath)}
+		}
+	}
 	if exe, err := executablePath(); err == nil {
 		if real, err := filepath.EvalSymlinks(exe); err == nil {
 			exe = real
@@ -379,10 +395,93 @@ func defaultConfigCandidates() []string {
 		candidates = append(candidates, filepath.Join(cwd, DefaultPath))
 	}
 	if dir, err := os.UserConfigDir(); err == nil {
-		candidates = append(candidates, filepath.Join(dir, "zhp2pproxy", DefaultPath))
+		candidate := filepath.Join(dir, "zhp2pproxy", DefaultPath)
+		if len(candidates) == 0 || candidates[0] != candidate {
+			candidates = append(candidates, candidate)
+		}
 	}
 	if len(candidates) == 0 {
 		candidates = append(candidates, DefaultPath)
 	}
 	return candidates
+}
+
+func migrateLegacyWindowsState(targetConfig string) error {
+	var candidates []string
+	if exe, err := executablePath(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), DefaultPath))
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		candidates = append(candidates, filepath.Join(cwd, DefaultPath))
+	}
+	seen := make(map[string]struct{})
+	for _, legacyConfig := range candidates {
+		if legacyConfig == targetConfig {
+			continue
+		}
+		if _, ok := seen[legacyConfig]; ok {
+			continue
+		}
+		seen[legacyConfig] = struct{}{}
+		data, err := os.ReadFile(legacyConfig)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(data, &raw); err != nil {
+			continue
+		}
+		if _, ok := raw["overlay_network_id"]; !ok {
+			continue
+		}
+		if _, ok := raw["p2p_proxy_listen"]; !ok {
+			continue
+		}
+		cfg := Default()
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			continue
+		}
+		oldDir := filepath.Dir(legacyConfig)
+		legacyIdentity := absFromBase(oldDir, cfg.IdentityKeyPath)
+		legacyPeers := absFromBase(oldDir, cfg.PeerStorePath)
+		cfg.IdentityKeyPath = "identity.key"
+		cfg.PeerStorePath = "peers.json"
+		if cfg.OverlayNetworkID == "zhcash-proxy-main" {
+			cfg.OverlayPSK = ""
+		}
+		if err := Save(targetConfig, cfg); err != nil {
+			return err
+		}
+		targetDir := filepath.Dir(targetConfig)
+		if err := copyRuntimeFileIfPresent(legacyIdentity, filepath.Join(targetDir, "identity.key"), 0600); err != nil {
+			return err
+		}
+		if err := copyRuntimeFileIfPresent(legacyPeers, filepath.Join(targetDir, "peers.json"), 0600); err != nil {
+			return err
+		}
+		return nil
+	}
+	return nil
+}
+
+func copyRuntimeFileIfPresent(source, destination string, mode os.FileMode) error {
+	if source == "" || source == destination {
+		return nil
+	}
+	if _, err := os.Stat(destination); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	data, err := os.ReadFile(source)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(destination, data, mode)
 }

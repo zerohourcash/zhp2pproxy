@@ -32,6 +32,9 @@ func TestLoadCreatesDefaultConfig(t *testing.T) {
 	if cfg.EnableNATPortMap || cfg.EnableHolePunching {
 		t.Fatalf("nat punching must be disabled by default: %+v", cfg)
 	}
+	if cfg.OverlayPSK != "" {
+		t.Fatalf("the shared default overlay must derive its PSK from network id, got %q", cfg.OverlayPSK)
+	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatal(err)
 	}
@@ -51,6 +54,65 @@ func TestResolvePathPrefersExecutableDirectory(t *testing.T) {
 	}
 	if got := ResolvePath(""); got != path {
 		t.Fatalf("ResolvePath() = %s, want %s", got, path)
+	}
+}
+
+func TestWindowsDefaultMigratesStateBesideNodeData(t *testing.T) {
+	appData := t.TempDir()
+	exeDir := t.TempDir()
+	oldRuntimeGOOS := runtimeGOOS
+	oldGetenv := getenv
+	oldExecutablePath := executablePath
+	runtimeGOOS = "windows"
+	getenv = func(name string) string {
+		if name == "APPDATA" {
+			return appData
+		}
+		return ""
+	}
+	executablePath = func() (string, error) {
+		return filepath.Join(exeDir, "zhp2pproxy.exe"), nil
+	}
+	defer func() {
+		runtimeGOOS = oldRuntimeGOOS
+		getenv = oldGetenv
+		executablePath = oldExecutablePath
+	}()
+
+	legacy := Default()
+	legacy.OverlayPSK = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	if err := Save(filepath.Join(exeDir, DefaultPath), legacy); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(exeDir, "identity.key"), []byte("identity"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(exeDir, "peers.json"), []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	wantPath := filepath.Join(appData, "ZHCASH", "zhp2pproxy", DefaultPath)
+	if got := ResolvePath(""); got != wantPath {
+		t.Fatalf("ResolvePath() = %s, want %s", got, wantPath)
+	}
+	cfg, created, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created {
+		t.Fatal("migrated config must not be reported as newly generated")
+	}
+	if cfg.OverlayPSK != "" {
+		t.Fatalf("public overlay PSK was not normalized: %q", cfg.OverlayPSK)
+	}
+	if cfg.IdentityKeyPath != filepath.Join(filepath.Dir(wantPath), "identity.key") {
+		t.Fatalf("identity path = %s", cfg.IdentityKeyPath)
+	}
+	if data, err := os.ReadFile(filepath.Join(filepath.Dir(wantPath), "identity.key")); err != nil || string(data) != "identity" {
+		t.Fatalf("identity was not migrated: data=%q err=%v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(wantPath), "peers.json")); err != nil {
+		t.Fatalf("peers were not migrated: %v", err)
 	}
 }
 

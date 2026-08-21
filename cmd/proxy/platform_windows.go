@@ -77,6 +77,9 @@ func runPlatform(configPath string) error {
 	if isService {
 		return svc.Run(windowsServiceName, &windowsService{configPath: configPath})
 	}
+	if err := handlePlatformAutostart(configPath, true); err != nil {
+		log.Printf("[autostart] warning: %v", err)
+	}
 
 	// Console mode is intentionally visible. Mirror output to a persistent file
 	// so closing the window remains a simple way to stop the proxy without losing

@@ -74,16 +74,23 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
 
 В консоли в реальном времени видны загрузка конфига, локальная RPC-нода,
 подключение P2P peers, HTTP listener, ошибки и штатная остановка. Тот же вывод
-дублируется в `%USERPROFILE%\zhp2pproxy\zhp2pproxy.log`. Закрытие окна или
+дублируется в `%APPDATA%\ZHCASH\zhp2pproxy\zhp2pproxy.log`. Закрытие окна или
 `Ctrl+C` завершает proxy; при следующем входе в Windows он запустится снова.
 При обновлении сохраняются `proxy.json`, `identity.key` и `peers.json`, а
 предыдущий бинарник остается как `zhp2pproxy.previous.exe`.
+
+Все runtime-данные Windows находятся рядом с данными ZHCASH-ноды в одной
+постоянной папке `%APPDATA%\ZHCASH\zhp2pproxy`: `proxy.json`,
+`proxy.example.json`, `peers.json`, `identity.key` и `zhp2pproxy.log`. Место
+запуска EXE больше не влияет на выбор конфига. При первом запуске валидные старые
+данные рядом с EXE автоматически копируются в эту папку; для общей сети
+`zhcash-proxy-main` одноразовый случайный PSK заменяется общим сетевым ключом.
 
 Проверка и управление:
 
 ```powershell
 Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" ZHP2PProxy
-Get-Content -Wait "$env:USERPROFILE\zhp2pproxy\zhp2pproxy.log"
+Get-Content -Wait "$env:APPDATA\ZHCASH\zhp2pproxy\zhp2pproxy.log"
 Invoke-RestMethod http://127.0.0.1:8081/info
 Invoke-RestMethod http://127.0.0.1:8081/health
 ```
@@ -93,7 +100,7 @@ Invoke-RestMethod http://127.0.0.1:8081/health
 ```powershell
 & "$env:USERPROFILE\zhp2pproxy\zhp2pproxy.exe" -unregister-autostart
 & "$env:USERPROFILE\zhp2pproxy\zhp2pproxy.exe" -register-autostart `
-  -config "$env:USERPROFILE\zhp2pproxy\proxy.json"
+  -config "$env:APPDATA\ZHCASH\zhp2pproxy\proxy.json"
 ```
 
 `/health` отдельно показывает связь с локальной ZHCASH RPC-нодой и с P2P
@@ -134,13 +141,15 @@ ZHCASH-ноду, затем закрыть и снова открыть `zhp2ppr
 - прописать `rpc_url`, если RPC удаленный HTTPS endpoint, например `https://rpc.zeroscan.st/`;
 - полностью прописать `rpc_host`, `rpc_port`, `rpc_user`, `rpc_pass`, если RPC удаленный без URL или нужен ручной режим. В этом случае автопоиск `zerohour.conf` не перетирает ручные credentials.
 
-Конфиг не зависит от текущей директории запуска. Без `-config` прокси ищет `proxy.json` в таком порядке:
+Конфиг не зависит от текущей директории запуска. На Windows без `-config`
+всегда используется `%APPDATA%\ZHCASH\zhp2pproxy\proxy.json`; старый валидный
+конфиг рядом с EXE мигрируется туда автоматически. На Linux поиск остается
+совместимым: рядом с бинарником, в текущей директории, затем
+`~/.config/zhp2pproxy/proxy.json`.
 
-- рядом с самим бинарником;
-- в текущей директории;
-- в user config dir: `~/.config/zhp2pproxy/proxy.json` на Linux.
-
-Если файл не найден, он создается рядом с бинарником. Относительные пути `identity_key_path`, `peer_store_path` и `node_config_path` считаются относительно директории найденного `proxy.json`. Явный путь всегда можно задать так:
+Относительные пути `identity_key_path`, `peer_store_path` и `node_config_path`
+считаются относительно директории найденного `proxy.json`. Явный путь всегда
+можно задать так:
 
 ```bash
 ./zhp2pproxy -config /opt/zhp2pproxy/proxy.json

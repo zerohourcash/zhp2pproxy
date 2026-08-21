@@ -380,14 +380,15 @@ try {
     }
 
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+    $nodeDataDir = Join-Path $env:APPDATA "ZHCASH\zhp2pproxy"
+    New-Item -ItemType Directory -Force -Path $nodeDataDir | Out-Null
     $installedExe = Join-Path $InstallDir "zhp2pproxy.exe"
-    $installedConfig = Join-Path $InstallDir "proxy.json"
+    $installedConfig = Join-Path $nodeDataDir "proxy.json"
     $installedTray = Join-Path $InstallDir "zhp2pproxy-tray.ps1"
     $installedControl = Join-Path $InstallDir "zhp2pproxy-control.ps1"
     Stop-ExistingProxyTray -TrayScript $installedTray
     $existingConsoleProcesses = Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue | Where-Object {
-        $_.Name -eq "zhp2pproxy.exe" -and $_.ExecutablePath -and
-        $_.ExecutablePath.Equals($installedExe, [StringComparison]::OrdinalIgnoreCase)
+        $_.Name -like "zhp2pproxy*.exe"
     }
     foreach ($process in $existingConsoleProcesses) {
         Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
@@ -400,7 +401,7 @@ try {
     }
     Copy-Item -LiteralPath $packageExe -Destination $installedExe -Force
     Copy-Item -LiteralPath (Join-Path $packageDir "README.md") -Destination (Join-Path $InstallDir "README.md") -Force
-    Copy-Item -LiteralPath $packageConfig -Destination (Join-Path $InstallDir "proxy.example.json") -Force
+    Copy-Item -LiteralPath $packageConfig -Destination (Join-Path $nodeDataDir "proxy.example.json") -Force
     foreach ($legacyUIFile in @($installedTray, $installedControl)) {
         if (Test-Path -LiteralPath $legacyUIFile -PathType Leaf) {
             Remove-Item -LiteralPath $legacyUIFile -Force
@@ -412,18 +413,93 @@ try {
     }
 
     if (-not (Test-Path -LiteralPath $installedConfig -PathType Leaf)) {
-        $config = Get-Content -Raw -LiteralPath $packageConfig | ConvertFrom-Json
-        $nodeConfig = Join-Path $env:APPDATA "ZHCASH\zerohour.conf"
-        if (Test-Path -LiteralPath $nodeConfig -PathType Leaf) {
-            $config.node_config_path = $nodeConfig
-            Write-InstallLog "Using ZHCASH config at $nodeConfig"
+        $legacyConfigCandidates = @(
+            (Join-Path $InstallDir "proxy.json"),
+            (Join-Path (Join-Path $env:USERPROFILE "Downloads") "proxy.json"),
+            (Join-Path (Get-Location).Path "proxy.json")
+        ) | Select-Object -Unique
+        $migratedConfig = $false
+        foreach ($legacyConfig in $legacyConfigCandidates) {
+            if (-not (Test-Path -LiteralPath $legacyConfig -PathType Leaf)) {
+                continue
+            }
+            try {
+                $legacyObject = Get-Content -Raw -LiteralPath $legacyConfig | ConvertFrom-Json
+                $looksLikeProxyConfig =
+                    ($legacyObject.PSObject.Properties.Name -contains "overlay_network_id") -and
+                    ($legacyObject.PSObject.Properties.Name -contains "p2p_proxy_listen")
+                if (-not $looksLikeProxyConfig) {
+                    continue
+                }
+                Copy-Item -LiteralPath $legacyConfig -Destination $installedConfig
+                $legacyDirectory = Split-Path -Parent $legacyConfig
+                foreach ($runtimeFile in @("identity.key", "peers.json")) {
+                    $legacyRuntimeFile = Join-Path $legacyDirectory $runtimeFile
+                    $targetRuntimeFile = Join-Path $nodeDataDir $runtimeFile
+                    if ((Test-Path -LiteralPath $legacyRuntimeFile -PathType Leaf) -and
+                        -not (Test-Path -LiteralPath $targetRuntimeFile -PathType Leaf)) {
+                        Copy-Item -LiteralPath $legacyRuntimeFile -Destination $targetRuntimeFile
+                    }
+                }
+                Write-InstallLog "Migrated proxy runtime data from $legacyDirectory to $nodeDataDir"
+                $migratedConfig = $true
+                break
+            } catch {
+                Write-Warning "Skipped invalid legacy proxy config ${legacyConfig}: $($_.Exception.Message)"
+            }
         }
-        $json = $config | ConvertTo-Json -Depth 20
-        Write-Utf8NoBom -Path $installedConfig -Content ($json + [Environment]::NewLine)
-        Write-InstallLog "Created $installedConfig"
-    } else {
-        Write-InstallLog "Kept existing proxy.json, identity.key and peers.json"
+        if (-not $migratedConfig) {
+            Copy-Item -LiteralPath $packageConfig -Destination $installedConfig
+            Write-InstallLog "Created $installedConfig"
+        }
     }
+
+    if (Test-Path -LiteralPath $installedConfig -PathType Leaf) {
+        $config = Get-Content -Raw -LiteralPath $installedConfig | ConvertFrom-Json
+        $configChanged = $false
+        foreach ($pathSetting in @(
+            @{ Name = "identity_key_path"; File = "identity.key" },
+            @{ Name = "peer_store_path"; File = "peers.json" }
+        )) {
+            $propertyName = $pathSetting.Name
+            $targetFile = Join-Path $nodeDataDir $pathSetting.File
+            if ($config.PSObject.Properties.Name -contains $propertyName) {
+                $oldValue = [string]$config.$propertyName
+                if ($oldValue) {
+                    $oldFile = if ([IO.Path]::IsPathRooted($oldValue)) {
+                        $oldValue
+                    } else {
+                        Join-Path (Split-Path -Parent $installedConfig) $oldValue
+                    }
+                    if ((Test-Path -LiteralPath $oldFile -PathType Leaf) -and
+                        -not (Test-Path -LiteralPath $targetFile -PathType Leaf)) {
+                        Copy-Item -LiteralPath $oldFile -Destination $targetFile
+                    }
+                }
+            }
+            if (-not ($config.PSObject.Properties.Name -contains $propertyName) -or
+                [string]$config.$propertyName -ne $pathSetting.File) {
+                $config | Add-Member -NotePropertyName $propertyName -NotePropertyValue $pathSetting.File -Force
+                $configChanged = $true
+            }
+        }
+        if (($config.PSObject.Properties.Name -contains "overlay_network_id") -and
+            $config.overlay_network_id -eq "zhcash-proxy-main" -and
+            ($config.PSObject.Properties.Name -contains "overlay_psk") -and
+            $config.overlay_psk) {
+            $config.overlay_psk = ""
+            $configChanged = $true
+            Write-InstallLog "Reset private one-off PSK to the shared zhcash-proxy-main network key"
+        }
+        if ($configChanged) {
+            $configBackup = "$installedConfig.before-runtime-migration-$(Get-Date -Format 'yyyyMMddHHmmss').bak"
+            Copy-Item -LiteralPath $installedConfig -Destination $configBackup
+            $json = $config | ConvertTo-Json -Depth 20
+            Write-Utf8NoBom -Path $installedConfig -Content ($json + [Environment]::NewLine)
+        }
+    }
+
+    Write-InstallLog "Using persistent node-side runtime data in $nodeDataDir"
 
     & $installedExe -version
     if ($LASTEXITCODE -ne 0) {
@@ -445,7 +521,7 @@ try {
         -WorkingDirectory $InstallDir -WindowStyle Normal -PassThru
     Start-Sleep -Seconds 2
     if ($consoleProcess.HasExited) {
-        $proxyLogPath = Join-Path $InstallDir "zhp2pproxy.log"
+        $proxyLogPath = Join-Path $nodeDataDir "zhp2pproxy.log"
         $logTail = if (Test-Path -LiteralPath $proxyLogPath -PathType Leaf) {
             (Get-Content -LiteralPath $proxyLogPath -Tail 25) -join [Environment]::NewLine
         } else {
@@ -537,7 +613,7 @@ try {
     Write-InstallLog "Config: $installedConfig"
     Write-InstallLog "Stop now: close the proxy console window or press Ctrl+C"
     Write-InstallLog "Disable autostart: & '$installedExe' -unregister-autostart"
-    Write-InstallLog "Logs: Get-Content -Wait $(Join-Path $InstallDir 'zhp2pproxy.log')"
+    Write-InstallLog "Logs: Get-Content -Wait $(Join-Path $nodeDataDir 'zhp2pproxy.log')"
     Write-InstallLog "Local API: $localApiBase/info"
     Write-InstallLog "For a public relay, allow inbound TCP and UDP 10001 in Windows Firewall"
     if ($health -and $health.p2p_network.connected) {
