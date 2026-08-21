@@ -133,6 +133,55 @@ function Install-ProxyStartupTask {
     }
 }
 
+function Install-ProxyTrayStartup {
+    param(
+        [string]$TrayScript,
+        [string]$ConfigPath
+    )
+
+    $powerShellPath = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+    if (-not (Test-Path -LiteralPath $powerShellPath -PathType Leaf)) {
+        throw "Windows PowerShell was not found at $powerShellPath"
+    }
+    $startupDirectory = [Environment]::GetFolderPath([Environment+SpecialFolder]::Startup)
+    if (-not $startupDirectory) {
+        throw "The current user's Windows Startup folder could not be resolved."
+    }
+    New-Item -ItemType Directory -Force -Path $startupDirectory | Out-Null
+    $shortcutPath = Join-Path $startupDirectory "ZHP2PProxy Status.lnk"
+    $shortcutArguments = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -ConfigPath "{1}"' -f $TrayScript, $ConfigPath
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($shortcutPath)
+    $shortcut.TargetPath = $powerShellPath
+    $shortcut.Arguments = $shortcutArguments
+    $shortcut.WorkingDirectory = Split-Path -Parent $TrayScript
+    $shortcut.Description = "Visible ZHP2PProxy network status and controls"
+    $shortcut.Save()
+
+    $verifiedShortcut = $shell.CreateShortcut($shortcutPath)
+    if (-not (Test-Path -LiteralPath $shortcutPath -PathType Leaf) -or
+        $verifiedShortcut.TargetPath -ne $powerShellPath -or
+        $verifiedShortcut.Arguments -ne $shortcutArguments) {
+        throw "Tray indicator autostart shortcut verification failed: $shortcutPath"
+    }
+    return $shortcutPath
+}
+
+function Stop-ExistingProxyTray {
+    param([string]$TrayScript)
+
+    $trayProcesses = Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+        ($_.Name -eq "powershell.exe" -or $_.Name -eq "pwsh.exe") -and
+        $_.CommandLine -and $_.CommandLine.IndexOf($TrayScript, [StringComparison]::OrdinalIgnoreCase) -ge 0
+    }
+    foreach ($process in $trayProcesses) {
+        Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+    if ($trayProcesses) {
+        Start-Sleep -Milliseconds 500
+    }
+}
+
 function Get-ProxyStartupDiagnostics {
     param(
         [string]$Mode,
@@ -295,11 +344,17 @@ try {
     Expand-Archive -LiteralPath $archivePath -DestinationPath $unpackDir
     $packageExe = Join-Path $packageDir "zhp2pproxy.exe"
     $packageConfig = Join-Path $packageDir "proxy.install.json"
+    $packageTray = Join-Path $packageDir "zhp2pproxy-tray.ps1"
+    $packageControl = Join-Path $packageDir "zhp2pproxy-control.ps1"
     if (-not (Test-Path -LiteralPath $packageExe -PathType Leaf)) {
         throw "Archive does not contain zhp2pproxy.exe."
     }
     if (-not (Test-Path -LiteralPath $packageConfig -PathType Leaf)) {
         throw "Archive does not contain the safe config template."
+    }
+    if (-not (Test-Path -LiteralPath $packageTray -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $packageControl -PathType Leaf)) {
+        throw "Archive does not contain the Windows status/control scripts."
     }
 
     $startupTaskName = "$ServiceName-Startup"
@@ -325,12 +380,17 @@ try {
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
     $installedExe = Join-Path $InstallDir "zhp2pproxy.exe"
     $installedConfig = Join-Path $InstallDir "proxy.json"
+    $installedTray = Join-Path $InstallDir "zhp2pproxy-tray.ps1"
+    $installedControl = Join-Path $InstallDir "zhp2pproxy-control.ps1"
+    Stop-ExistingProxyTray -TrayScript $installedTray
     if (Test-Path -LiteralPath $installedExe -PathType Leaf) {
         Copy-Item -LiteralPath $installedExe -Destination (Join-Path $InstallDir "zhp2pproxy.previous.exe") -Force
     }
     Copy-Item -LiteralPath $packageExe -Destination $installedExe -Force
     Copy-Item -LiteralPath (Join-Path $packageDir "README.md") -Destination (Join-Path $InstallDir "README.md") -Force
     Copy-Item -LiteralPath $packageConfig -Destination (Join-Path $InstallDir "proxy.example.json") -Force
+    Copy-Item -LiteralPath $packageTray -Destination $installedTray -Force
+    Copy-Item -LiteralPath $packageControl -Destination $installedControl -Force
 
     if (-not (Test-Path -LiteralPath $installedConfig -PathType Leaf)) {
         $config = Get-Content -Raw -LiteralPath $packageConfig | ConvertFrom-Json
@@ -538,6 +598,27 @@ try {
             Write-Warning "A minimal local RPC config was created. Restart the ZHCASH node, then run: Stop-ScheduledTask '$startupTaskName'; Start-ScheduledTask '$startupTaskName'"
         }
     }
+
+    $trayShortcut = Install-ProxyTrayStartup -TrayScript $installedTray -ConfigPath $installedConfig
+    $powerShellPath = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+    $trayArguments = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -ConfigPath "{1}" -ShowWindow' -f $installedTray, $installedConfig
+    Start-Process -FilePath $powerShellPath -ArgumentList $trayArguments
+    Start-Sleep -Seconds 2
+    $trayProcess = Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+        ($_.Name -eq "powershell.exe" -or $_.Name -eq "pwsh.exe") -and
+        $_.CommandLine -and $_.CommandLine.IndexOf($installedTray, [StringComparison]::OrdinalIgnoreCase) -ge 0
+    } | Select-Object -First 1
+    if (-not $trayProcess) {
+        $trayErrorLog = Join-Path $InstallDir "zhp2pproxy-tray-error.log"
+        $trayError = if (Test-Path -LiteralPath $trayErrorLog -PathType Leaf) {
+            (Get-Content -LiteralPath $trayErrorLog -Tail 10) -join [Environment]::NewLine
+        } else {
+            "no tray error log was created"
+        }
+        throw "The visible tray indicator did not remain running. $trayError"
+    }
+    Write-InstallLog "Visible tray indicator is running and opens automatically at user logon"
+    Write-InstallLog "Tray autostart: $trayShortcut"
 } finally {
     if (Test-Path -LiteralPath $tempDir) {
         Remove-Item -LiteralPath $tempDir -Recurse -Force

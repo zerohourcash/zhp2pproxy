@@ -18,7 +18,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for required in README.md install.sh install.ps1 proxy.install.json zhp2pproxy.service.in; do
+for required in README.md install.sh install.ps1 proxy.install.json zhp2pproxy.service.in zhp2pproxy-tray.ps1 zhp2pproxy-control.ps1; do
   [[ -f "$ROOT/$required" ]] || {
     printf 'missing release file: %s\n' "$required" >&2
     exit 1
@@ -64,6 +64,8 @@ for arch in "${ARCHES[@]}"; do
   )
   install -m 0644 "$ROOT/README.md" "$package_dir/README.md"
   install -m 0600 "$ROOT/proxy.install.json" "$package_dir/proxy.install.json"
+  install -m 0644 "$ROOT/zhp2pproxy-tray.ps1" "$package_dir/zhp2pproxy-tray.ps1"
+  install -m 0644 "$ROOT/zhp2pproxy-control.ps1" "$package_dir/zhp2pproxy-control.ps1"
   (
     cd "$TMP_DIR"
     zip -q -r "$package.zip" "$package"
