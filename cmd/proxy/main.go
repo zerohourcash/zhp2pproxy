@@ -17,6 +17,17 @@ import (
 
 var version = "dev"
 
+type localNodeRecovery struct {
+	Config             config.Config
+	Attempted          bool
+	NodeConfigPath     string
+	NodeBackupPath     string
+	ProxyBackupPath    string
+	NodeConfigChanged  bool
+	ProxyConfigChanged bool
+	Restarted          []string
+}
+
 func main() {
 	configPath := flag.String("config", "", "path to proxy.json; default: executable dir, cwd, then user config dir")
 	showVersion := flag.Bool("version", false, "print version and exit")
@@ -58,8 +69,9 @@ func runProxy(parent context.Context, configPath string) error {
 
 	local := node.NewClient(cfg)
 	pingCtx, pingCancel := context.WithTimeout(ctx, 5*time.Second)
-	if err := local.Ping(pingCtx); err != nil {
-		log.Printf("[node] local rpc unavailable at startup: %v", err)
+	initialPingErr := local.Ping(pingCtx)
+	if initialPingErr != nil {
+		log.Printf("[node] local rpc unavailable at startup: %v", initialPingErr)
 	} else {
 		log.Printf("[node] local rpc ok")
 	}
@@ -96,6 +108,7 @@ func runProxy(parent context.Context, configPath string) error {
 		}
 		serveErr <- nil
 	}()
+	go monitorLocalNode(ctx, resolvedConfigPath, cfg, local, initialPingErr)
 
 	select {
 	case <-ctx.Done():
@@ -112,4 +125,69 @@ func runProxy(parent context.Context, configPath string) error {
 		return fmt.Errorf("[server] shutdown: %w", err)
 	}
 	return nil
+}
+
+func monitorLocalNode(ctx context.Context, configPath string, cfg config.Config, local *node.Client, initialErr error) {
+	connected := initialErr == nil
+	failures := 0
+	if initialErr != nil {
+		failures = 1
+	}
+	recoveryAttempted := false
+	var nextRecoveryAttempt time.Time
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		err := local.Ping(pingCtx)
+		cancel()
+		if err == nil {
+			failures = 0
+			if !connected {
+				log.Printf("[node] local rpc connected")
+			}
+			connected = true
+			recoveryAttempted = false
+			continue
+		}
+		failures++
+		if connected {
+			log.Printf("[node] local rpc connection lost: %v", err)
+		}
+		connected = false
+		if recoveryAttempted || failures < 2 || time.Now().Before(nextRecoveryAttempt) {
+			continue
+		}
+		nextRecoveryAttempt = time.Now().Add(time.Minute)
+		recovery, repairErr := recoverPlatformLocalNode(configPath, cfg)
+		if !recovery.Attempted {
+			if repairErr != nil {
+				log.Printf("[node] automatic RPC recovery failed: %v", repairErr)
+			}
+			continue
+		}
+		recoveryAttempted = true
+		cfg = recovery.Config
+		local.Update(cfg)
+		if recovery.NodeConfigChanged {
+			log.Printf("[node] wrote loopback-only RPC settings to %s", recovery.NodeConfigPath)
+		}
+		if recovery.NodeBackupPath != "" {
+			log.Printf("[node] node config backup: %s", recovery.NodeBackupPath)
+		}
+		if recovery.ProxyBackupPath != "" {
+			log.Printf("[node] proxy config backup: %s", recovery.ProxyBackupPath)
+		}
+		for _, executable := range recovery.Restarted {
+			log.Printf("[node] restarted %s; waiting for RPC", executable)
+		}
+		if repairErr != nil {
+			log.Printf("[node] automatic RPC recovery warning: %v", repairErr)
+		}
+	}
 }

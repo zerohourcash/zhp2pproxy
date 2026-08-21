@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"zhp2pproxy/internal/config"
@@ -16,6 +17,7 @@ import (
 )
 
 type Client struct {
+	mu     sync.RWMutex
 	url    string
 	user   string
 	pass   string
@@ -24,17 +26,24 @@ type Client struct {
 }
 
 func NewClient(cfg config.Config) *Client {
+	client := &Client{client: &http.Client{Timeout: 30 * time.Second}}
+	client.Update(cfg)
+	return client
+}
+
+// Update swaps local RPC connection settings without rebuilding handlers that
+// already hold this client. It is used after automatic node-config repair.
+func (c *Client) Update(cfg config.Config) {
 	url := cfg.RPCURL
 	if url == "" {
 		url = fmt.Sprintf("http://%s:%d/", cfg.RPCHost, cfg.RPCPort)
 	}
-	return &Client{
-		url:    url,
-		user:   cfg.RPCUser,
-		pass:   cfg.RPCPass,
-		cookie: cfg.RPCCookiePath,
-		client: &http.Client{Timeout: 30 * time.Second},
-	}
+	c.mu.Lock()
+	c.url = url
+	c.user = cfg.RPCUser
+	c.pass = cfg.RPCPass
+	c.cookie = cfg.RPCCookiePath
+	c.mu.Unlock()
 }
 
 func (c *Client) Call(ctx context.Context, req jsonrpc.Request) (json.RawMessage, *jsonrpc.Error) {
@@ -48,15 +57,17 @@ func (c *Client) Call(ctx context.Context, req jsonrpc.Request) (json.RawMessage
 	if err != nil {
 		return nil, &jsonrpc.Error{Code: -32600, Message: err.Error()}
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url, bytes.NewReader(body))
+	c.mu.RLock()
+	url, user, pass, cookie := c.url, c.user, c.pass, c.cookie
+	c.mu.RUnlock()
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, &jsonrpc.Error{Code: -32603, Message: err.Error()}
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
-	user, pass := c.user, c.pass
-	if user == "" && pass == "" && c.cookie != "" {
-		cookieUser, cookiePass, err := readCookieAuth(c.cookie)
+	if user == "" && pass == "" && cookie != "" {
+		cookieUser, cookiePass, err := readCookieAuth(cookie)
 		if err != nil {
 			return nil, &jsonrpc.Error{Code: -32603, Message: err.Error()}
 		}

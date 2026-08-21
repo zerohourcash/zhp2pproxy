@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+
+	"zhp2pproxy/internal/config"
 )
 
 func handlePlatformAutostart(_ string, _ bool) error {
@@ -18,4 +20,8 @@ func runPlatform(configPath string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return runProxy(ctx, configPath)
+}
+
+func recoverPlatformLocalNode(_ string, cfg config.Config) (localNodeRecovery, error) {
+	return localNodeRecovery{Config: cfg}, nil
 }

@@ -11,9 +11,13 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
+	"unsafe"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 	"golang.org/x/sys/windows/svc"
 
@@ -187,6 +191,137 @@ func copyWindowsExecutable(sourcePath, destinationPath string) error {
 		return fmt.Errorf("close installed executable %s: %w", destinationPath, err)
 	}
 	return nil
+}
+
+type windowsNodeProcess struct {
+	PID  uint32
+	Name string
+	Path string
+}
+
+func recoverPlatformLocalNode(proxyConfigPath string, cfg config.Config) (localNodeRecovery, error) {
+	result := localNodeRecovery{Config: cfg}
+	if cfg.RPCURL != "" || (cfg.RPCHost != "127.0.0.1" && !strings.EqualFold(cfg.RPCHost, "localhost")) {
+		return result, nil
+	}
+	processes, err := findWindowsNodeProcesses()
+	if err != nil {
+		return result, err
+	}
+	nodeConfigPath := cfg.NodeConfigPath
+	if nodeConfigPath == "" {
+		appData := os.Getenv("APPDATA")
+		if appData == "" {
+			return result, fmt.Errorf("APPDATA is unavailable")
+		}
+		nodeConfigPath = filepath.Join(appData, "ZHCASH", "zerohour.conf")
+	}
+	if len(processes) == 0 {
+		if _, err := os.Stat(nodeConfigPath); os.IsNotExist(err) {
+			return result, nil
+		} else if err != nil {
+			return result, fmt.Errorf("inspect node config %s: %w", nodeConfigPath, err)
+		}
+	}
+	updated, repair, err := config.RepairLocalNodeRPC(proxyConfigPath, nodeConfigPath)
+	if err != nil {
+		return result, err
+	}
+	result.Config = updated
+	result.Attempted = true
+	result.NodeConfigPath = repair.NodeConfigPath
+	result.NodeBackupPath = repair.NodeBackupPath
+	result.ProxyBackupPath = repair.ProxyBackupPath
+	result.NodeConfigChanged = repair.NodeConfigChanged
+	result.ProxyConfigChanged = repair.ProxyConfigChanged
+	if len(processes) > 0 {
+		restarted, err := restartWindowsNodeProcesses(processes)
+		if err != nil {
+			return result, err
+		}
+		result.Restarted = restarted
+	}
+	return result, nil
+}
+
+func findWindowsNodeProcesses() ([]windowsNodeProcess, error) {
+	wanted := map[string]struct{}{
+		"zerohourd.exe":   {},
+		"zerohour-qt.exe": {},
+		"zhcashd.exe":     {},
+		"zhcash-qt.exe":   {},
+	}
+	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return nil, fmt.Errorf("enumerate Windows processes: %w", err)
+	}
+	defer windows.CloseHandle(snapshot)
+	entry := windows.ProcessEntry32{Size: uint32(unsafe.Sizeof(windows.ProcessEntry32{}))}
+	if err := windows.Process32First(snapshot, &entry); err != nil {
+		return nil, fmt.Errorf("read first Windows process: %w", err)
+	}
+	var found []windowsNodeProcess
+	for {
+		name := strings.ToLower(windows.UTF16ToString(entry.ExeFile[:]))
+		if _, ok := wanted[name]; ok {
+			path, pathErr := windowsProcessImagePath(entry.ProcessID)
+			if pathErr == nil && path != "" {
+				found = append(found, windowsNodeProcess{PID: entry.ProcessID, Name: name, Path: path})
+			}
+		}
+		if err := windows.Process32Next(snapshot, &entry); err != nil {
+			if err == syscall.ERROR_NO_MORE_FILES {
+				break
+			}
+			return nil, fmt.Errorf("read Windows process list: %w", err)
+		}
+	}
+	return found, nil
+}
+
+func windowsProcessImagePath(pid uint32) (string, error) {
+	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+	if err != nil {
+		return "", err
+	}
+	defer windows.CloseHandle(handle)
+	buffer := make([]uint16, 32768)
+	size := uint32(len(buffer))
+	if err := windows.QueryFullProcessImageName(handle, 0, &buffer[0], &size); err != nil {
+		return "", err
+	}
+	return windows.UTF16ToString(buffer[:size]), nil
+}
+
+func restartWindowsNodeProcesses(processes []windowsNodeProcess) ([]string, error) {
+	var restarted []string
+	for _, process := range processes {
+		handle, err := windows.OpenProcess(windows.SYNCHRONIZE, false, process.PID)
+		if err != nil {
+			return restarted, fmt.Errorf("open %s process %d for restart: %w", process.Name, process.PID, err)
+		}
+		output, stopErr := exec.Command("taskkill.exe", "/PID", strconv.FormatUint(uint64(process.PID), 10)).CombinedOutput()
+		if stopErr != nil {
+			windows.CloseHandle(handle)
+			return restarted, fmt.Errorf("stop %s process %d: %w (%s)", process.Name, process.PID, stopErr, strings.TrimSpace(string(output)))
+		}
+		waitResult, waitErr := windows.WaitForSingleObject(handle, 30_000)
+		windows.CloseHandle(handle)
+		if waitErr != nil {
+			return restarted, fmt.Errorf("wait for %s process %d: %w", process.Name, process.PID, waitErr)
+		}
+		if waitResult != windows.WAIT_OBJECT_0 {
+			return restarted, fmt.Errorf("%s process %d did not stop safely within 30 seconds", process.Name, process.PID)
+		}
+		command := exec.Command(process.Path)
+		command.Dir = filepath.Dir(process.Path)
+		command.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NEW_PROCESS_GROUP}
+		if err := command.Start(); err != nil {
+			return restarted, fmt.Errorf("restart %s from %s: %w", process.Name, process.Path, err)
+		}
+		restarted = append(restarted, process.Path)
+	}
+	return restarted, nil
 }
 
 type windowsService struct {
