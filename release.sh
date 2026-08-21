@@ -64,6 +64,7 @@ for arch in "${ARCHES[@]}"; do
   )
   install -m 0644 "$ROOT/README.md" "$package_dir/README.md"
   install -m 0600 "$ROOT/proxy.install.json" "$package_dir/proxy.install.json"
+  install -m 0755 "$package_dir/zhp2pproxy.exe" "$TMP_DIR/$package.exe"
   (
     cd "$TMP_DIR"
     zip -q -r "$package.zip" "$package"
@@ -75,6 +76,8 @@ done
   sha256sum \
     zhp2pproxy-linux-amd64.tar.gz \
     zhp2pproxy-linux-arm64.tar.gz \
+    zhp2pproxy-windows-amd64.exe \
+    zhp2pproxy-windows-arm64.exe \
     zhp2pproxy-windows-amd64.zip \
     zhp2pproxy-windows-arm64.zip >SHA256SUMS
 )
@@ -82,6 +85,8 @@ done
 for file in \
   zhp2pproxy-linux-amd64.tar.gz \
   zhp2pproxy-linux-arm64.tar.gz \
+  zhp2pproxy-windows-amd64.exe \
+  zhp2pproxy-windows-arm64.exe \
   zhp2pproxy-windows-amd64.zip \
   zhp2pproxy-windows-arm64.zip \
   SHA256SUMS; do
@@ -96,6 +101,8 @@ if [[ -n "$PUBLISH_DIR" ]]; then
   for file in \
     zhp2pproxy-linux-amd64.tar.gz \
     zhp2pproxy-linux-arm64.tar.gz \
+    zhp2pproxy-windows-amd64.exe \
+    zhp2pproxy-windows-arm64.exe \
     zhp2pproxy-windows-amd64.zip \
     zhp2pproxy-windows-arm64.zip \
     SHA256SUMS README.md install.ps1; do

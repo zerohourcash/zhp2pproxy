@@ -54,6 +54,15 @@ Invoke-WebRequest https://link.zeroscan.st/zhp2pproxy/install.ps1 -OutFile $inst
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
 ```
 
+Готовые консольные EXE также доступны напрямую:
+
+- `https://link.zeroscan.st/zhp2pproxy/zhp2pproxy-windows-amd64.exe`
+- `https://link.zeroscan.st/zhp2pproxy/zhp2pproxy-windows-arm64.exe`
+
+Прямой EXE можно запустить вручную, но для первого запуска рекомендуется
+установщик выше: он проверяет SHA-256, создает безопасный `proxy.json`, убирает
+старые фоновые способы запуска и регистрирует автозагрузку.
+
 Установщик скачивает архив только по HTTPS, сверяет SHA-256, устанавливает
 файлы в `%USERPROFILE%\zhp2pproxy` и запускает сам
 `zhp2pproxy.exe` в обычном видимом окне консоли. EXE регистрирует точную команду
