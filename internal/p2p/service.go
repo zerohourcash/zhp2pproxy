@@ -149,6 +149,14 @@ func (s *Service) PeerID() string {
 	return s.host.ID().String()
 }
 
+func (s *Service) NetworkID() string {
+	return s.overlay.NetworkID
+}
+
+func (s *Service) ConnectedPeerCount() int {
+	return len(s.host.Network().Peers())
+}
+
 func New(ctx context.Context, cfg config.Config, local *node.Client) (*Service, error) {
 	priv, err := loadOrCreateIdentity(cfg.IdentityKeyPath)
 	if err != nil {

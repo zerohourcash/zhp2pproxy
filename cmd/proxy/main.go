@@ -3,11 +3,9 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"zhp2pproxy/internal/config"
@@ -27,20 +25,25 @@ func main() {
 		log.Printf("zhp2pproxy %s", version)
 		return
 	}
+	if err := runPlatform(*configPath); err != nil {
+		log.Fatal(err)
+	}
+}
 
-	resolvedConfigPath := config.ResolvePath(*configPath)
+func runProxy(parent context.Context, configPath string) error {
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+
+	resolvedConfigPath := config.ResolvePath(configPath)
 	cfg, created, err := config.Load(resolvedConfigPath)
 	if err != nil {
-		log.Fatalf("[config] %v", err)
+		return fmt.Errorf("[config] %w", err)
 	}
 	if created {
 		log.Printf("[config] generated %s; edit it if you need custom rpc credentials or bootstrap peers", resolvedConfigPath)
 	} else {
 		log.Printf("[config] loaded %s", resolvedConfigPath)
 	}
-
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
 
 	local := node.NewClient(cfg)
 	pingCtx, pingCancel := context.WithTimeout(ctx, 5*time.Second)
@@ -53,9 +56,16 @@ func main() {
 
 	p2pSvc, err := p2p.New(ctx, cfg, local)
 	if err != nil {
-		log.Fatalf("[p2p] %v", err)
+		if ctx.Err() != nil {
+			return nil
+		}
+		return fmt.Errorf("[p2p] %w", err)
 	}
-	defer p2pSvc.Close()
+	defer func() {
+		if err := p2pSvc.Close(); err != nil {
+			log.Printf("[p2p] close: %v", err)
+		}
+	}()
 	log.Printf("[p2p] peer id: %s", p2pSvc.PeerID())
 
 	metrics := &proxy.Metrics{}
@@ -66,18 +76,29 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	serveErr := make(chan error, 1)
 	go func() {
 		log.Printf("[server] listening on %s", cfg.Listen)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("[server] %v", err)
+			serveErr <- fmt.Errorf("[server] %w", err)
+			return
 		}
+		serveErr <- nil
 	}()
 
-	<-ctx.Done()
+	select {
+	case <-ctx.Done():
+	case err := <-serveErr:
+		if err != nil {
+			return err
+		}
+		return nil
+	}
 	log.Printf("[shutdown] stopping")
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
-		log.Printf("[server] shutdown: %v", err)
+		return fmt.Errorf("[server] shutdown: %w", err)
 	}
+	return nil
 }

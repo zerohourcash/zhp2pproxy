@@ -43,6 +43,58 @@ sudo systemctl restart zhp2pproxy
 Для публичной relay-ноды открой TCP/UDP `10001`. HTTP `8081` и native tunnel
 `3890` по умолчанию остаются доступны только локально.
 
+## Установка на Windows
+
+Поддерживаются 64-битные Windows на `x64` и `ARM64`. Открой PowerShell **от
+имени администратора** и выполни:
+
+```powershell
+$installer = Join-Path $env:TEMP "install-zhp2pproxy.ps1"
+Invoke-WebRequest https://link.zeroscan.st/zhp2pproxy/install.ps1 -OutFile $installer
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
+```
+
+Установщик скачивает архив только по HTTPS, сверяет SHA-256, устанавливает
+файлы в `%USERPROFILE%\zhp2pproxy` и создает службу `ZHP2PProxy` с отложенным
+автозапуском. При обновлении сохраняются `proxy.json`, `identity.key` и
+`peers.json`, а предыдущий бинарник остается как
+`zhp2pproxy.previous.exe`. Если найден
+`%APPDATA%\ZHCASH\zerohour.conf`, его абсолютный путь записывается в новый
+конфиг, потому что служба работает от `LocalSystem`.
+
+Проверка и управление:
+
+```powershell
+Get-Service ZHP2PProxy
+Restart-Service ZHP2PProxy
+Get-Content -Wait "$env:USERPROFILE\zhp2pproxy\zhp2pproxy.log"
+Invoke-RestMethod http://127.0.0.1:8081/info
+Invoke-RestMethod http://127.0.0.1:8081/health
+```
+
+`/health` отдельно показывает связь с локальной ZHCASH RPC-нодой и с P2P
+overlay. Локальная нода необязательна: при отсутствии `zerohour.conf` proxy
+может выполнять разрешенные RPC-вызовы через подключенные P2P peers.
+Windows-установщик ждет подключения к overlay и выполняет настоящий
+`getblockcount` через локальный HTTP endpoint proxy. Поэтому итоговая
+диагностика проверяет не только статус службы, но и рабочий маршрут до сети.
+
+Если локальный процесс ZHCASH или его стандартный конфиг обнаружен, но прямой
+RPC не отвечает, установщик применяет последний fallback: сохраняет исходный
+`zerohour.conf` и `proxy.json` в timestamped backup, удаляет только конфликтующие
+RPC-параметры и записывает новый минимальный блок `server=1` с уникальным
+паролем и доступом только через `127.0.0.1:3889`. Существующий managed-блок
+повторно не меняется. Это единственный случай, когда установщик задает вопрос в
+консоли; без подтверждения файлы не меняются. После этого нужно перезапустить
+ZHCASH-ноду, затем службу `ZHP2PProxy`. Если ни процесса, ни конфига локальной
+ноды нет, установщик ничего не создает: это штатный P2P-only режим. Для
+автоматической установки поведение можно явно выбрать параметром
+`-NodeConfigRepair Apply` или `-NodeConfigRepair Skip`.
+
+Для публичной relay-ноды отдельно разреши входящие TCP и UDP подключения на
+порт `10001` в Windows Firewall. HTTP `8081` и native tunnel `3890` по
+умолчанию доступны только локально.
+
 Новая реализация находится в исходниках Go и собирается обычным способом:
 
 ```bash

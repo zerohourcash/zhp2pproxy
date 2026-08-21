@@ -11,6 +11,7 @@ func New(cfg config.Config, h *proxy.Handler, metrics *proxy.Metrics) http.Handl
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", h.RPC)
 	mux.HandleFunc("/info", h.Info)
+	mux.HandleFunc("/health", h.Health)
 	mux.HandleFunc("/admin/status", h.AdminStatus)
 	mux.HandleFunc("/admin/connect", h.AdminConnect)
 	mux.HandleFunc("/pubsub/publish", h.Publish)

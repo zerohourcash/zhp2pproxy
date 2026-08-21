@@ -18,12 +18,21 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for required in README.md install.sh proxy.install.json zhp2pproxy.service.in; do
+for required in README.md install.sh install.ps1 proxy.install.json zhp2pproxy.service.in; do
   [[ -f "$ROOT/$required" ]] || {
     printf 'missing release file: %s\n' "$required" >&2
     exit 1
   }
 done
+
+need_release_command() {
+  command -v "$1" >/dev/null 2>&1 || {
+    printf 'required release command is missing: %s\n' "$1" >&2
+    exit 1
+  }
+}
+
+need_release_command zip
 
 mkdir -p "$DIST_DIR"
 for arch in "${ARCHES[@]}"; do
@@ -43,20 +52,53 @@ for arch in "${ARCHES[@]}"; do
     --directory "$TMP_DIR" "$package"
 done
 
+for arch in "${ARCHES[@]}"; do
+  package="zhp2pproxy-windows-$arch"
+  package_dir="$TMP_DIR/$package"
+  mkdir "$package_dir"
+  (
+    cd "$ROOT"
+    CGO_ENABLED=0 GOOS=windows GOARCH="$arch" "$GO_BIN" build \
+      -trimpath -ldflags "-s -w -X main.version=$VERSION" \
+      -o "$package_dir/zhp2pproxy.exe" ./cmd/proxy
+  )
+  install -m 0644 "$ROOT/README.md" "$package_dir/README.md"
+  install -m 0600 "$ROOT/proxy.install.json" "$package_dir/proxy.install.json"
+  (
+    cd "$TMP_DIR"
+    zip -q -r "$package.zip" "$package"
+  )
+done
+
 (
   cd "$TMP_DIR"
-  sha256sum zhp2pproxy-linux-amd64.tar.gz zhp2pproxy-linux-arm64.tar.gz >SHA256SUMS
+  sha256sum \
+    zhp2pproxy-linux-amd64.tar.gz \
+    zhp2pproxy-linux-arm64.tar.gz \
+    zhp2pproxy-windows-amd64.zip \
+    zhp2pproxy-windows-arm64.zip >SHA256SUMS
 )
 
-for file in zhp2pproxy-linux-amd64.tar.gz zhp2pproxy-linux-arm64.tar.gz SHA256SUMS; do
+for file in \
+  zhp2pproxy-linux-amd64.tar.gz \
+  zhp2pproxy-linux-arm64.tar.gz \
+  zhp2pproxy-windows-amd64.zip \
+  zhp2pproxy-windows-arm64.zip \
+  SHA256SUMS; do
   install -m 0644 "$TMP_DIR/$file" "$DIST_DIR/$file"
 done
 install -m 0755 "$ROOT/install.sh" "$DIST_DIR/install.sh"
+install -m 0644 "$ROOT/install.ps1" "$DIST_DIR/install.ps1"
 install -m 0644 "$ROOT/README.md" "$DIST_DIR/README.md"
 
 if [[ -n "$PUBLISH_DIR" ]]; then
   install -d -m 0755 "$PUBLISH_DIR"
-  for file in zhp2pproxy-linux-amd64.tar.gz zhp2pproxy-linux-arm64.tar.gz SHA256SUMS README.md; do
+  for file in \
+    zhp2pproxy-linux-amd64.tar.gz \
+    zhp2pproxy-linux-arm64.tar.gz \
+    zhp2pproxy-windows-amd64.zip \
+    zhp2pproxy-windows-arm64.zip \
+    SHA256SUMS README.md install.ps1; do
     install -m 0644 "$DIST_DIR/$file" "$PUBLISH_DIR/$file"
   done
   install -m 0755 "$DIST_DIR/install.sh" "$PUBLISH_DIR/install.sh"

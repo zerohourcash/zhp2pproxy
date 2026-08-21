@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"zhp2pproxy/internal/config"
 	"zhp2pproxy/internal/node"
@@ -20,6 +21,9 @@ type P2PRPC interface {
 	AdminState() any
 	ConnectPeer(ctx context.Context, addr string) error
 	Publish(ctx context.Context, data []byte) error
+	PeerID() string
+	NetworkID() string
+	ConnectedPeerCount() int
 }
 
 type Handler struct {
@@ -133,6 +137,59 @@ func (h *Handler) Info(w http.ResponseWriter, _ *http.Request) {
 		info["p2p"] = h.p2p.Info()
 	}
 	writeJSON(w, info)
+}
+
+func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	peerID := ""
+	networkID := ""
+	connectedPeers := 0
+	if h.p2p != nil {
+		peerID = h.p2p.PeerID()
+		networkID = h.p2p.NetworkID()
+		connectedPeers = h.p2p.ConnectedPeerCount()
+	}
+
+	localConnected := false
+	var blockHeight any
+	localError := ""
+	ctx, cancel := context.WithTimeout(r.Context(), 1500*time.Millisecond)
+	defer cancel()
+	result, rpcErr := h.local.Call(ctx, jsonrpc.Request{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "getblockcount",
+		Params:  json.RawMessage("[]"),
+	})
+	if rpcErr == nil {
+		localConnected = true
+		if err := json.Unmarshal(result, &blockHeight); err != nil {
+			blockHeight = string(result)
+		}
+	} else {
+		localError = rpcErr.Message
+	}
+
+	p2pConnected := peerID != "" && connectedPeers > 0
+	writeJSON(w, map[string]any{
+		"ok": localConnected || p2pConnected,
+		"local_node": map[string]any{
+			"connected":    localConnected,
+			"block_height": blockHeight,
+			"error":        localError,
+			"optional":     true,
+		},
+		"p2p_network": map[string]any{
+			"connected":       p2pConnected,
+			"connected_peers": connectedPeers,
+			"network_id":      networkID,
+			"peer_id":         peerID,
+		},
+	})
 }
 
 func (h *Handler) Publish(w http.ResponseWriter, r *http.Request) {
