@@ -43,6 +43,7 @@ const (
 	nodeP2PBase       = "/zhcash/node-p2p/1.0.0"
 	rpcStreamTimeout  = 5 * time.Second
 	nodeStreamTimeout = 20 * time.Second
+	bootstrapTimeout  = 10 * time.Second
 )
 
 type Service struct {
@@ -214,12 +215,19 @@ func New(ctx context.Context, cfg config.Config, local *node.Client) (*Service, 
 	s := &Service{cfg: cfg, host: h, dht: kad, pubsub: ps, topic: topic, local: local, overlay: overlay, stats: make(map[peer.ID]*peerStats)}
 	h.SetStreamHandler(overlay.RPCProtocol, s.handleRPCStream)
 	h.SetStreamHandler(overlay.NodeP2PProtocol, s.handleNodeP2PStream)
-	if err := s.connectCachedAndBootstrap(ctx); err != nil {
-		log.Printf("[p2p] bootstrap warning: %v", err)
-	}
-	if err := kad.Bootstrap(ctx); err != nil {
-		log.Printf("[p2p] dht bootstrap warning: %v", err)
-	}
+	// Bootstrap peers are external and may be offline or filtered. Do not hold
+	// the local HTTP/RPC service startup on network dials; bounded background
+	// attempts keep the proxy usable while connectivity recovers.
+	go func() {
+		if err := s.connectCachedAndBootstrap(ctx); err != nil {
+			log.Printf("[p2p] bootstrap warning: %v", err)
+		}
+		if ctx.Err() == nil {
+			if err := kad.Bootstrap(ctx); err != nil {
+				log.Printf("[p2p] dht bootstrap warning: %v", err)
+			}
+		}
+	}()
 	go s.discoveryLoop(ctx)
 	go s.pubsubDrain(ctx)
 	go s.announceLoop(ctx)
@@ -539,7 +547,10 @@ func (s *Service) connectCachedAndBootstrap(ctx context.Context) error {
 		if info.ID == s.host.ID() {
 			continue
 		}
-		if err := s.host.Connect(ctx, *info); err != nil {
+		connectCtx, cancel := context.WithTimeout(ctx, bootstrapTimeout)
+		err = s.host.Connect(connectCtx, *info)
+		cancel()
+		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
