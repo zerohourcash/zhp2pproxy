@@ -45,23 +45,21 @@ sudo systemctl restart zhp2pproxy
 
 ## Установка на Windows
 
-Поддерживаются 64-битные Windows на `x64` и `ARM64`. Открой PowerShell **от
-имени администратора** и выполни:
-
-```powershell
-$installer = Join-Path $env:TEMP "install-zhp2pproxy.ps1"
-Invoke-WebRequest https://link.zeroscan.st/zhp2pproxy/install.ps1 -OutFile $installer
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
-```
-
-Готовые консольные EXE также доступны напрямую:
+Поддерживаются 64-битные Windows на `x64` и `ARM64`. PowerShell и права
+администратора для обычной установки не нужны: скачай подходящий EXE и открой
+его двойным кликом:
 
 - `https://link.zeroscan.st/zhp2pproxy/zhp2pproxy-windows-amd64.exe`
 - `https://link.zeroscan.st/zhp2pproxy/zhp2pproxy-windows-arm64.exe`
 
-Прямой EXE можно запустить вручную, но для первого запуска рекомендуется
-установщик выше: он проверяет SHA-256, создает безопасный `proxy.json`, убирает
-старые фоновые способы запуска и регистрирует автозагрузку.
+EXE сам копирует себя в `%USERPROFILE%\zhp2pproxy\zhp2pproxy.exe`, продолжает
+работу из постоянной папки, создает runtime-каталог рядом с данными ZHCASH-ноды
+и регистрирует автозагрузку текущего пользователя. Исходный файл в Downloads
+после этого больше не нужен.
+
+Расширенный `install.ps1` остается дополнительным вариантом для миграции старой
+Windows-службы и полной диагностики, но для обычного первого запуска он не
+требуется.
 
 Установщик скачивает архив только по HTTPS, сверяет SHA-256, устанавливает
 файлы в `%USERPROFILE%\zhp2pproxy` и запускает сам
