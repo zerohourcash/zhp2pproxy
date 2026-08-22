@@ -3,6 +3,7 @@
 # rollback copies that must never be staged with `git add -A`.
 identity.key*
 proxy.json*
+proxy.example.json
 peers.json*
 zerohour.conf*
 *.pem
