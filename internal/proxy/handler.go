@@ -18,6 +18,7 @@ import (
 
 	"github.com/zerohourcash/zhp2pproxy/internal/config"
 	"github.com/zerohourcash/zhp2pproxy/internal/node"
+	"github.com/zerohourcash/zhp2pproxy/internal/rpcaudit"
 	"github.com/zerohourcash/zhp2pproxy/pkg/jsonrpc"
 )
 
@@ -77,8 +78,9 @@ func (h *Handler) RPC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	trimmed := firstNonSpace(body)
+	ctx := rpcaudit.WithSource(r.Context(), "http-jsonrpc")
 	if trimmed == '[' {
-		h.handleBatch(w, r.Context(), body)
+		h.handleBatch(w, ctx, body)
 		return
 	}
 	var req jsonrpc.Request
@@ -87,7 +89,7 @@ func (h *Handler) RPC(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, jsonrpc.ErrorResponse(nil, -32700, err.Error()))
 		return
 	}
-	writeJSON(w, h.handleOne(r.Context(), req))
+	writeJSON(w, h.handleOne(ctx, req))
 }
 
 // BrowserRPC exposes a small JSON-RPC-over-WebSocket bridge for an already
@@ -139,7 +141,7 @@ func (h *Handler) BrowserRPC(w http.ResponseWriter, r *http.Request) {
 			h.writeBrowserRPCResponse(conn, jsonrpc.ErrorResponse(req.ID, -32601, "Method not allowed"))
 			continue
 		}
-		response := h.handleOne(r.Context(), req)
+		response := h.handleOne(rpcaudit.WithSource(r.Context(), "browser-websocket"), req)
 		if !h.writeBrowserRPCResponse(conn, response) {
 			return
 		}

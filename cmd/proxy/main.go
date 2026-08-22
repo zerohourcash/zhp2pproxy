@@ -13,6 +13,7 @@ import (
 	"github.com/zerohourcash/zhp2pproxy/internal/node"
 	"github.com/zerohourcash/zhp2pproxy/internal/p2p"
 	"github.com/zerohourcash/zhp2pproxy/internal/proxy"
+	"github.com/zerohourcash/zhp2pproxy/internal/rpcaudit"
 	"github.com/zerohourcash/zhp2pproxy/internal/server"
 	"github.com/zerohourcash/zhp2pproxy/internal/updater"
 )
@@ -75,8 +76,12 @@ func runProxy(parent context.Context, configPath string) error {
 		log.Printf("[config] loaded %s", resolvedConfigPath)
 	}
 
+	rpcAudit := rpcaudit.New(log.Printf)
+	rpcAudit.Start(ctx, time.Hour)
+	defer rpcAudit.ReportNow()
 	local := node.NewClient(cfg)
-	pingCtx, pingCancel := context.WithTimeout(ctx, 5*time.Second)
+	local.SetAudit(rpcAudit)
+	pingCtx, pingCancel := context.WithTimeout(rpcaudit.WithSource(ctx, "startup-probe"), 5*time.Second)
 	initialPingErr := local.Ping(pingCtx)
 	if initialPingErr != nil {
 		log.Printf("[node] local rpc unavailable at startup: %v", initialPingErr)
@@ -92,6 +97,7 @@ func runProxy(parent context.Context, configPath string) error {
 		}
 		return fmt.Errorf("[p2p] %w", err)
 	}
+	p2pSvc.SetAudit(rpcAudit)
 	defer func() {
 		if err := p2pSvc.Close(); err != nil {
 			log.Printf("[p2p] close: %v", err)
@@ -185,7 +191,7 @@ func monitorLocalNode(ctx context.Context, configPath string, cfg config.Config,
 			return
 		case <-ticker.C:
 		}
-		pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		pingCtx, cancel := context.WithTimeout(rpcaudit.WithSource(ctx, "node-monitor"), 5*time.Second)
 		err := local.Ping(pingCtx)
 		cancel()
 		if err == nil {

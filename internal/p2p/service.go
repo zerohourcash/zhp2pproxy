@@ -35,6 +35,7 @@ import (
 	"github.com/zerohourcash/zhp2pproxy/internal/config"
 	"github.com/zerohourcash/zhp2pproxy/internal/node"
 	"github.com/zerohourcash/zhp2pproxy/internal/proxy"
+	"github.com/zerohourcash/zhp2pproxy/internal/rpcaudit"
 	"github.com/zerohourcash/zhp2pproxy/internal/securefs"
 	"github.com/zerohourcash/zhp2pproxy/pkg/jsonrpc"
 )
@@ -61,6 +62,8 @@ type Service struct {
 	tcpLn       net.Listener
 	rpcPeerMu   sync.Mutex
 	rpcPeerIx   int
+	auditMu     sync.RWMutex
+	audit       *rpcaudit.Tracker
 	statsMu     sync.Mutex
 	stats       map[peer.ID]*peerStats
 	rpcMu       sync.Mutex
@@ -196,6 +199,12 @@ func (s *Service) NetworkID() string {
 
 func (s *Service) ConnectedPeerCount() int {
 	return len(s.host.Network().Peers())
+}
+
+func (s *Service) SetAudit(audit *rpcaudit.Tracker) {
+	s.auditMu.Lock()
+	s.audit = audit
+	s.auditMu.Unlock()
 }
 
 func (s *Service) NodeP2PStatus() any {
@@ -636,7 +645,19 @@ func (s *Service) nextPeerOffset(n int) int {
 	return ix
 }
 
-func (s *Service) callPeer(ctx context.Context, id peer.ID, req jsonrpc.Request) (json.RawMessage, error) {
+func (s *Service) callPeer(ctx context.Context, id peer.ID, req jsonrpc.Request) (result json.RawMessage, callErr error) {
+	started := time.Now()
+	s.auditMu.RLock()
+	audit := s.audit
+	s.auditMu.RUnlock()
+	if audit != nil {
+		defer func() {
+			audit.Record(rpcaudit.Event{
+				Method: req.Method, Source: rpcaudit.Source(ctx), Route: "overlay-rpc",
+				Target: id.String(), Duration: time.Since(started), Success: callErr == nil,
+			})
+		}()
+	}
 	timeout := rpcTimeoutForMethod(req.Method)
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -784,7 +805,8 @@ func (s *Service) handleRPCStream(st network.Stream) {
 		}
 	}
 	_ = st.SetDeadline(time.Now().Add(timeout))
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx := rpcaudit.WithSource(context.Background(), "overlay-peer:"+remotePeer.String())
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	result, rpcErr := s.local.Call(ctx, req)
 	if rpcErr != nil {
@@ -839,7 +861,8 @@ func (s *Service) handleBrowserRPCStream(st network.Stream) {
 	if req.Method == "scantxoutset" {
 		localTimeout = 6 * time.Second
 	}
-	localCtx, localCancel := context.WithTimeout(context.Background(), localTimeout)
+	localCtx := rpcaudit.WithSource(context.Background(), "browser-peer:"+remotePeer.String())
+	localCtx, localCancel := context.WithTimeout(localCtx, localTimeout)
 	result, rpcErr := s.local.Call(localCtx, req)
 	localCancel()
 	if rpcErr != nil {
@@ -847,7 +870,8 @@ func (s *Service) handleBrowserRPCStream(st network.Stream) {
 		// relay through the authenticated proxy overlay with a fresh timeout.
 		// Reusing localCtx here would make the relay fail immediately whenever a
 		// stalled local RPC consumed its entire deadline.
-		relayCtx, relayCancel := context.WithTimeout(context.Background(), timeout)
+		relayCtx := rpcaudit.WithSource(context.Background(), "browser-peer:"+remotePeer.String())
+		relayCtx, relayCancel := context.WithTimeout(relayCtx, timeout)
 		relayed, relayErr := s.CallAny(relayCtx, req)
 		relayCancel()
 		if relayErr == nil {

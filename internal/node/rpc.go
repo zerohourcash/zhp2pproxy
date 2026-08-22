@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/zerohourcash/zhp2pproxy/internal/config"
+	"github.com/zerohourcash/zhp2pproxy/internal/rpcaudit"
 	"github.com/zerohourcash/zhp2pproxy/internal/securefs"
 	"github.com/zerohourcash/zhp2pproxy/pkg/jsonrpc"
 )
@@ -26,6 +27,13 @@ type Client struct {
 	cookie  string
 	invalid string
 	client  *http.Client
+	audit   *rpcaudit.Tracker
+}
+
+func (c *Client) SetAudit(audit *rpcaudit.Tracker) {
+	c.mu.Lock()
+	c.audit = audit
+	c.mu.Unlock()
 }
 
 func NewClient(cfg config.Config) *Client {
@@ -51,7 +59,8 @@ func (c *Client) Update(cfg config.Config) {
 	c.mu.Unlock()
 }
 
-func (c *Client) Call(ctx context.Context, req jsonrpc.Request) (json.RawMessage, *jsonrpc.Error) {
+func (c *Client) Call(ctx context.Context, req jsonrpc.Request) (result json.RawMessage, rpcErr *jsonrpc.Error) {
+	started := time.Now()
 	if req.JSONRPC == "" {
 		req.JSONRPC = "2.0"
 	}
@@ -63,8 +72,16 @@ func (c *Client) Call(ctx context.Context, req jsonrpc.Request) (json.RawMessage
 		return nil, &jsonrpc.Error{Code: -32600, Message: err.Error()}
 	}
 	c.mu.RLock()
-	endpoint, user, pass, cookie, invalid := c.url, c.user, c.pass, c.cookie, c.invalid
+	endpoint, user, pass, cookie, invalid, audit := c.url, c.user, c.pass, c.cookie, c.invalid, c.audit
 	c.mu.RUnlock()
+	if audit != nil {
+		defer func() {
+			audit.Record(rpcaudit.Event{
+				Method: req.Method, Source: rpcaudit.Source(ctx), Route: "local-rpc",
+				Target: rpcAuditTarget(endpoint), Duration: time.Since(started), Success: rpcErr == nil,
+			})
+		}()
+	}
 	if invalid != "" {
 		return nil, &jsonrpc.Error{Code: -32603, Message: invalid}
 	}
@@ -112,6 +129,14 @@ func (c *Client) Call(ctx context.Context, req jsonrpc.Request) (json.RawMessage
 		return nil, rpcResp.Error
 	}
 	return rpcResp.Result, nil
+}
+
+func rpcAuditTarget(endpoint string) string {
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "invalid-local-rpc"
+	}
+	return parsed.Scheme + "://" + parsed.Host
 }
 
 func validateRPCEndpoint(endpoint string) string {

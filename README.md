@@ -93,6 +93,31 @@ WebRTC Direct. Browser RPC публикует только ограниченн�
 локальной ZHCASH-ноды нет, proxy пересылает запрос через приватный overlay к
 peer с рабочей RPC-нодой; admin/node-control методы браузеру не открываются.
 
+## RPC-журнал и нагрузка
+
+Одинаковый аудит работает в Linux и Windows. Каждое фактическое обращение к
+RPC печатает метод, источник, маршрут, адрес локальной RPC-ноды или peer id,
+результат и длительность. Например:
+
+```text
+[rpc] method=getblockcount source=http-jsonrpc route=local-rpc target=http://127.0.0.1:3889 status=ok duration_ms=4
+[rpc] method=getblock source=browser-websocket route=overlay-rpc target=12D3KooW... status=ok duration_ms=83
+```
+
+Раз в час печатается статистика именно за прошедшее часовое окно: количество
+запросов, успешных ответов и ошибок, средняя и максимальная задержка, нагрузка
+по маршрутам, источникам и RPC-методам. При штатной остановке дополнительно
+печатается неполное текущее окно:
+
+```text
+[rpc-stats] window=1h0m0s requests=420 ok=416 errors=4 avg_ms=18 max_ms=907 routes=local-rpc:380/2,overlay-rpc:40/2 sources=http-jsonrpc:300,node-monitor:120 methods=getblock:80,getblockcount:340
+```
+
+Параметры, request id, тела ответов, raw-транзакции и RPC credentials никогда
+не записываются в этот журнал. В Linux строки доступны через
+`journalctl -u zhp2pproxy -f`, а в Windows видны в консоли и дублируются в
+`%APPDATA%\ZHCASH\zhp2pproxy\zhp2pproxy.log`.
+
 ## Установка на Windows
 
 Код поддерживает 64-битные Windows на `x64` и `ARM64`, но в официальном
