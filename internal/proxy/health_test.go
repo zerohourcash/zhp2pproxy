@@ -7,9 +7,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"zhp2pproxy/internal/config"
-	"zhp2pproxy/internal/node"
-	"zhp2pproxy/pkg/jsonrpc"
+	"github.com/zerohourcash/zhp2pproxy/internal/config"
+	"github.com/zerohourcash/zhp2pproxy/internal/node"
+	"github.com/zerohourcash/zhp2pproxy/pkg/jsonrpc"
 )
 
 type healthTestP2P struct {

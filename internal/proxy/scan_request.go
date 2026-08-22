@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"regexp"
 
-	"zhp2pproxy/pkg/jsonrpc"
+	"github.com/zerohourcash/zhp2pproxy/pkg/jsonrpc"
 )
 
 var (

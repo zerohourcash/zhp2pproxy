@@ -173,3 +173,39 @@ func TestLinuxUpdateRejectsSymlinkExecutable(t *testing.T) {
 		t.Fatal("symlink executable was accepted")
 	}
 }
+
+func TestOfficialGitHubReleaseURLPolicy(t *testing.T) {
+	for _, accepted := range []string{
+		"https://github.com/zerohourcash/zhp2pproxy/releases/latest/download/update.json",
+		"https://github.com/zerohourcash/zhp2pproxy/releases/download/v1.0.0/zhp2pproxy-linux-amd64.bin",
+	} {
+		if !officialGitHubReleaseURL(accepted) {
+			t.Fatalf("official release URL rejected: %s", accepted)
+		}
+	}
+	for _, rejected := range []string{
+		"https://github.com/another/zhp2pproxy/releases/download/v1/update.json",
+		"https://github.com/zerohourcash/zhp2pproxy/issues/1",
+		"https://github.com/zerohourcash/zhp2pproxy/releases/download/v1/update.json?x=1",
+		"https://link.zeroscan.st/zhp2pproxy/update.json",
+	} {
+		if officialGitHubReleaseURL(rejected) {
+			t.Fatalf("unofficial release URL accepted: %s", rejected)
+		}
+	}
+}
+
+func TestSecureHTTPClientRejectsRedirectOutsideGitHubAssets(t *testing.T) {
+	client := secureHTTPClient(&http.Client{}, false)
+	request, err := http.NewRequest(http.MethodGet, "https://evil.example/update.json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous, err := http.NewRequest(http.MethodGet, "https://github.com/zerohourcash/zhp2pproxy/releases/latest/download/update.json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.CheckRedirect(request, []*http.Request{previous}); err == nil {
+		t.Fatal("redirect outside official GitHub asset hosts was accepted")
+	}
+}

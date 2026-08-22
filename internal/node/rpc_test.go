@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"zhp2pproxy/internal/config"
+	"github.com/zerohourcash/zhp2pproxy/internal/config"
 )
 
 func TestClientUpdateSwitchesRPCWithoutReplacingClient(t *testing.T) {

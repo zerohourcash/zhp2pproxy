@@ -1,4 +1,4 @@
-module zhp2pproxy
+module github.com/zerohourcash/zhp2pproxy
 
 go 1.26.6
 

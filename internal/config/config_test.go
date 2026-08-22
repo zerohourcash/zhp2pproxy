@@ -122,6 +122,31 @@ func TestLoadAllowsProtectedNonLoopbackHTTP(t *testing.T) {
 	}
 }
 
+func TestLoadPinsAndPersistsOfficialUpdateManifest(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "proxy.json")
+	if err := os.WriteFile(path, []byte(`{"update_manifest_url":"https://updates.example.test/update.json"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UpdateManifestURL != OfficialUpdateManifestURL {
+		t.Fatalf("manifest URL = %q", cfg.UpdateManifestURL)
+	}
+	var stored map[string]any
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored["update_manifest_url"] != OfficialUpdateManifestURL {
+		t.Fatalf("official manifest URL was not persisted: %#v", stored["update_manifest_url"])
+	}
+}
+
 func TestResolvePathPrefersExecutableDirectory(t *testing.T) {
 	dir := t.TempDir()
 	oldExecutablePath := executablePath

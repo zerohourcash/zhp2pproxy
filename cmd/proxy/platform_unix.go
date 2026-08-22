@@ -9,7 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"zhp2pproxy/internal/config"
+	"github.com/zerohourcash/zhp2pproxy/internal/config"
 )
 
 func handlePlatformAutostart(_ string, _ bool) error {

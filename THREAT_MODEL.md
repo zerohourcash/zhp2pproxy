@@ -47,8 +47,10 @@ sign data other than the transaction the user reviewed.
 ## Updates
 
 The embedded Ed25519 public key verifies release metadata. The private key is
-kept outside Git. The manifest carries a monotonic sequence to prevent rollback
-and SHA-256 digests to bind artifacts. Linux activation is confined to the
+kept outside Git. Production code accepts update manifests and binary URLs only
+from GitHub Releases in `zerohourcash/zhp2pproxy`; redirects are limited to
+GitHub's release asset hosts. The manifest carries a monotonic sequence to
+prevent rollback and SHA-256 digests to bind artifacts. Linux activation is confined to the
 executable directory, verifies the downloaded binary's version and keeps one
 rollback copy. Windows public artifacts additionally require Authenticode.
 

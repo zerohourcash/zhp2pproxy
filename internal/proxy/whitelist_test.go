@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"zhp2pproxy/pkg/jsonrpc"
+	"github.com/zerohourcash/zhp2pproxy/pkg/jsonrpc"
 )
 
 func TestDangerousMethodsAreDenied(t *testing.T) {

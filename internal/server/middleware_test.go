@@ -5,8 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"zhp2pproxy/internal/config"
-	"zhp2pproxy/internal/proxy"
+	"github.com/zerohourcash/zhp2pproxy/internal/config"
+	"github.com/zerohourcash/zhp2pproxy/internal/proxy"
 )
 
 func TestMiddlewareRejectsUntrustedBrowserOrigin(t *testing.T) {

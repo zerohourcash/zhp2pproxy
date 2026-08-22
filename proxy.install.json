@@ -1,7 +1,7 @@
 {
   "admin_token": "",
   "auto_update_enabled": true,
-  "update_manifest_url": "https://link.zeroscan.st/zhp2pproxy/update.json",
+  "update_manifest_url": "https://github.com/zerohourcash/zhp2pproxy/releases/latest/download/update.json",
   "update_check_interval_seconds": 300,
   "allowed_ips": [],
   "trusted_proxies": [],

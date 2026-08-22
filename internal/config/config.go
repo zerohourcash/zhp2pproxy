@@ -14,10 +14,12 @@ import (
 	"strconv"
 	"strings"
 
-	"zhp2pproxy/internal/securefs"
+	"github.com/zerohourcash/zhp2pproxy/internal/securefs"
 )
 
 const DefaultPath = "proxy.json"
+
+const OfficialUpdateManifestURL = "https://github.com/zerohourcash/zhp2pproxy/releases/latest/download/update.json"
 
 var executablePath = os.Executable
 var runtimeGOOS = runtime.GOOS
@@ -137,7 +139,7 @@ func Default() Config {
 		NodeP2PMagic:         "f1cfa6d3",
 		LocalRPCPreferDirect: false,
 		AutoUpdateEnabled:    true,
-		UpdateManifestURL:    "https://link.zeroscan.st/zhp2pproxy/update.json",
+		UpdateManifestURL:    OfficialUpdateManifestURL,
 		UpdateCheckInterval:  300,
 	}
 }
@@ -170,6 +172,7 @@ func Load(path string) (Config, bool, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return cfg, created, err
 	}
+	configuredUpdateManifestURL := cfg.UpdateManifestURL
 	applyDefaults(&cfg)
 	if err := validateHTTPExposure(cfg); err != nil {
 		return cfg, created, err
@@ -181,6 +184,11 @@ func Load(path string) (Config, bool, error) {
 		}
 		if err := updateConfigFileField(path, "admin_token", cfg.AdminToken); err != nil {
 			return cfg, created, fmt.Errorf("persist admin token: %w", err)
+		}
+	}
+	if cfg.UpdateManifestURL != configuredUpdateManifestURL {
+		if err := updateConfigFileField(path, "update_manifest_url", cfg.UpdateManifestURL); err != nil {
+			return cfg, created, fmt.Errorf("persist official update manifest URL: %w", err)
 		}
 	}
 	if err := protectConfigPath(path); err != nil {
@@ -366,7 +374,7 @@ func applyDefaults(cfg *Config) {
 	if cfg.CORSAllowedOrigins == nil {
 		cfg.CORSAllowedOrigins = def.CORSAllowedOrigins
 	}
-	if cfg.UpdateManifestURL == "" {
+	if cfg.UpdateManifestURL != OfficialUpdateManifestURL {
 		cfg.UpdateManifestURL = def.UpdateManifestURL
 	}
 	if cfg.UpdateCheckInterval < 300 {

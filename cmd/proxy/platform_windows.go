@@ -21,7 +21,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 	"golang.org/x/sys/windows/svc"
 
-	"zhp2pproxy/internal/config"
+	"github.com/zerohourcash/zhp2pproxy/internal/config"
 )
 
 const windowsServiceName = "ZHP2PProxy"

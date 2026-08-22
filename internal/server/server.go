@@ -3,8 +3,8 @@ package server
 import (
 	"net/http"
 
-	"zhp2pproxy/internal/config"
-	"zhp2pproxy/internal/proxy"
+	"github.com/zerohourcash/zhp2pproxy/internal/config"
+	"github.com/zerohourcash/zhp2pproxy/internal/proxy"
 )
 
 func New(cfg config.Config, h *proxy.Handler, metrics *proxy.Metrics) http.Handler {

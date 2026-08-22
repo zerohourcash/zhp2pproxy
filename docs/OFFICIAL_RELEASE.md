@@ -31,6 +31,10 @@ The release command requires:
 - `WINDOWS_VERIFY_COMMAND` independently validating one signed EXE path;
 - `PUBLISH_DIR` set to a staging directory, never directly to a live web root.
 
+Update URLs are fixed to GitHub Releases under
+`https://github.com/zerohourcash/zhp2pproxy`. Mirrors may distribute files for
+manual recovery, but the automatic updater deliberately rejects them.
+
 Example shape (signer-specific commands are intentionally not stored here):
 
 ```bash

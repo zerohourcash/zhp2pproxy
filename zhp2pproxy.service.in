@@ -1,6 +1,6 @@
 [Unit]
 Description=ZHP2PProxy RPC overlay gateway
-Documentation=https://link.zeroscan.st/zhp2pproxy/README.md
+Documentation=https://github.com/zerohourcash/zhp2pproxy
 After=network-online.target
 Wants=network-online.target
 

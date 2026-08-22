@@ -32,11 +32,11 @@ import (
 	ma "github.com/multiformats/go-multiaddr"
 	"golang.org/x/time/rate"
 
-	"zhp2pproxy/internal/config"
-	"zhp2pproxy/internal/node"
-	"zhp2pproxy/internal/proxy"
-	"zhp2pproxy/internal/securefs"
-	"zhp2pproxy/pkg/jsonrpc"
+	"github.com/zerohourcash/zhp2pproxy/internal/config"
+	"github.com/zerohourcash/zhp2pproxy/internal/node"
+	"github.com/zerohourcash/zhp2pproxy/internal/proxy"
+	"github.com/zerohourcash/zhp2pproxy/internal/securefs"
+	"github.com/zerohourcash/zhp2pproxy/pkg/jsonrpc"
 )
 
 const (

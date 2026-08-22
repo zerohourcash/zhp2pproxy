@@ -14,7 +14,7 @@ wallet keys or unrestricted node administration. The project is licensed under
 автозапуск:
 
 ```bash
-curl -fsSL https://link.zeroscan.st/zhp2pproxy/install.sh -o /tmp/install-zhp2pproxy.sh
+curl -fsSL https://github.com/zerohourcash/zhp2pproxy/releases/latest/download/install.sh -o /tmp/install-zhp2pproxy.sh
 sudo bash /tmp/install-zhp2pproxy.sh
 ```
 
@@ -32,7 +32,8 @@ sudo ZHP2P_USER=zhp2pproxy bash /tmp/install-zhp2pproxy.sh
 `zhp2pproxy.previous`.
 
 После первого релиза с update-контуром Linux-служба проверяет подписанный
-`https://link.zeroscan.st/zhp2pproxy/update.json` через 20 секунд после запуска
+`https://github.com/zerohourcash/zhp2pproxy/releases/latest/download/update.json`
+через 20 секунд после запуска
 и далее раз в 5 минут. Manifest проверяется встроенным Ed25519 public key,
 бинарник — SHA-256 и собственным `-version`; текущий файл сохраняется как
 `zhp2pproxy.previous`, новый активируется атомарно, а systemd перезапускает
@@ -44,8 +45,10 @@ sudo ZHP2P_USER=zhp2pproxy bash /tmp/install-zhp2pproxy.sh
 }
 ```
 
-Интервал можно увеличить через `update_check_interval_seconds` (минимум 300),
-а собственный HTTPS release endpoint задать через `update_manifest_url`.
+Интервал можно увеличить через `update_check_interval_seconds` (минимум 300).
+Manifest и бинарники принимаются только из GitHub Releases официального
+репозитория `zerohourcash/zhp2pproxy`; произвольный `update_manifest_url`
+автоматически заменяется официальным.
 
 Проверка после установки:
 
@@ -90,8 +93,8 @@ peer с рабочей RPC-нодой; admin/node-control методы брау�
 администратора для обычной установки не нужны: скачай подходящий EXE и открой
 его двойным кликом:
 
-- `https://link.zeroscan.st/zhp2pproxy/zhp2pproxy-windows-amd64.exe`
-- `https://link.zeroscan.st/zhp2pproxy/zhp2pproxy-windows-arm64.exe`
+- `https://github.com/zerohourcash/zhp2pproxy/releases/latest/download/zhp2pproxy-windows-amd64.exe`
+- `https://github.com/zerohourcash/zhp2pproxy/releases/latest/download/zhp2pproxy-windows-arm64.exe`
 
 EXE сам копирует себя в `%USERPROFILE%\zhp2pproxy\zhp2pproxy.exe`, продолжает
 работу из постоянной папки, создает runtime-каталог рядом с данными ZHCASH-ноды

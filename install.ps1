@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$BaseUrl = "https://link.zeroscan.st/zhp2pproxy",
+    [string]$BaseUrl = "https://github.com/zerohourcash/zhp2pproxy/releases/latest/download",
     [string]$InstallDir = (Join-Path $env:USERPROFILE "zhp2pproxy"),
     [string]$ServiceName = "ZHP2PProxy",
     [ValidateSet("Prompt", "Apply", "Skip")]

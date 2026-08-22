@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 PROGRAM="zhp2pproxy"
 SERVICE_NAME="zhp2pproxy.service"
-BASE_URL="${ZHP2P_BASE_URL:-https://link.zeroscan.st/zhp2pproxy}"
+BASE_URL="${ZHP2P_BASE_URL:-https://github.com/zerohourcash/zhp2pproxy/releases/latest/download}"
 TARGET_USER="${ZHP2P_USER:-}"
 SKIP_SYSTEMD="${ZHP2P_SKIP_SYSTEMD:-0}"
 UPDATE_PUBLIC_KEY_PEM='-----BEGIN PUBLIC KEY-----

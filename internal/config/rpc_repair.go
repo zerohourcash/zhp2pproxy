@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"zhp2pproxy/internal/securefs"
+	"github.com/zerohourcash/zhp2pproxy/internal/securefs"
 )
 
 const (

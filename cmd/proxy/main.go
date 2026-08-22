@@ -9,12 +9,12 @@ import (
 	"strconv"
 	"time"
 
-	"zhp2pproxy/internal/config"
-	"zhp2pproxy/internal/node"
-	"zhp2pproxy/internal/p2p"
-	"zhp2pproxy/internal/proxy"
-	"zhp2pproxy/internal/server"
-	"zhp2pproxy/internal/updater"
+	"github.com/zerohourcash/zhp2pproxy/internal/config"
+	"github.com/zerohourcash/zhp2pproxy/internal/node"
+	"github.com/zerohourcash/zhp2pproxy/internal/p2p"
+	"github.com/zerohourcash/zhp2pproxy/internal/proxy"
+	"github.com/zerohourcash/zhp2pproxy/internal/server"
+	"github.com/zerohourcash/zhp2pproxy/internal/updater"
 )
 
 var version = "dev"

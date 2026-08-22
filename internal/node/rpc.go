@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"zhp2pproxy/internal/config"
-	"zhp2pproxy/internal/securefs"
-	"zhp2pproxy/pkg/jsonrpc"
+	"github.com/zerohourcash/zhp2pproxy/internal/config"
+	"github.com/zerohourcash/zhp2pproxy/internal/securefs"
+	"github.com/zerohourcash/zhp2pproxy/pkg/jsonrpc"
 )
 
 type Client struct {

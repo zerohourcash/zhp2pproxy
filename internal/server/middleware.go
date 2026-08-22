@@ -12,8 +12,8 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"zhp2pproxy/internal/config"
-	"zhp2pproxy/internal/proxy"
+	"github.com/zerohourcash/zhp2pproxy/internal/config"
+	"github.com/zerohourcash/zhp2pproxy/internal/proxy"
 )
 
 func middleware(cfg config.Config, metrics *proxy.Metrics, next http.Handler) http.Handler {

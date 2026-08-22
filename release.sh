@@ -9,6 +9,9 @@ SOURCE_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
 SOURCE_TAG="$(git -C "$ROOT" describe --tags --exact-match HEAD 2>/dev/null || true)"
 VERSION="${VERSION:-${SOURCE_TAG#v}}"
 VERSION="${VERSION:-$(date -u +%Y%m%d)-$(git -C "$ROOT" rev-parse --short=12 HEAD)}"
+RELEASE_TAG="${SOURCE_TAG:-v$VERSION}"
+OFFICIAL_REPOSITORY="zerohourcash/zhp2pproxy"
+RELEASE_ASSET_BASE="https://github.com/$OFFICIAL_REPOSITORY/releases/download/$RELEASE_TAG"
 BUILD_SEQUENCE="${BUILD_SEQUENCE:-$(date -u +%Y%m%d%H%M%S)}"
 UPDATE_SIGNING_KEY="${UPDATE_SIGNING_KEY:-}"
 WINDOWS_SIGN_COMMAND="${WINDOWS_SIGN_COMMAND:-}"
@@ -219,9 +222,12 @@ if [[ -n "$UPDATE_SIGNING_KEY" ]]; then
   linux_arm64_sha="$(awk '$2 == "zhp2pproxy-linux-arm64.bin" {print $1}' "$TMP_DIR/SHA256SUMS")"
   windows_amd64_sha="$(awk '$2 == "zhp2pproxy-windows-amd64.exe" {print $1}' "$TMP_DIR/SHA256SUMS")"
   windows_arm64_sha="$(awk '$2 == "zhp2pproxy-windows-arm64.exe" {print $1}' "$TMP_DIR/SHA256SUMS")"
-  printf '{"version":"%s","sequence":%s,"published_at":"%s","downloads":{"linux-amd64":{"url":"https://link.zeroscan.st/zhp2pproxy/zhp2pproxy-linux-amd64.bin","sha256":"%s"},"linux-arm64":{"url":"https://link.zeroscan.st/zhp2pproxy/zhp2pproxy-linux-arm64.bin","sha256":"%s"},"windows-amd64":{"url":"https://link.zeroscan.st/zhp2pproxy/zhp2pproxy-windows-amd64.exe","sha256":"%s"},"windows-arm64":{"url":"https://link.zeroscan.st/zhp2pproxy/zhp2pproxy-windows-arm64.exe","sha256":"%s"}}}\n' \
+  printf '{"version":"%s","sequence":%s,"published_at":"%s","downloads":{"linux-amd64":{"url":"%s/zhp2pproxy-linux-amd64.bin","sha256":"%s"},"linux-arm64":{"url":"%s/zhp2pproxy-linux-arm64.bin","sha256":"%s"},"windows-amd64":{"url":"%s/zhp2pproxy-windows-amd64.exe","sha256":"%s"},"windows-arm64":{"url":"%s/zhp2pproxy-windows-arm64.exe","sha256":"%s"}}}\n' \
     "$VERSION" "$BUILD_SEQUENCE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    "$linux_amd64_sha" "$linux_arm64_sha" "$windows_amd64_sha" "$windows_arm64_sha" \
+    "$RELEASE_ASSET_BASE" "$linux_amd64_sha" \
+    "$RELEASE_ASSET_BASE" "$linux_arm64_sha" \
+    "$RELEASE_ASSET_BASE" "$windows_amd64_sha" \
+    "$RELEASE_ASSET_BASE" "$windows_arm64_sha" \
     >"$TMP_DIR/update.json"
   openssl pkeyutl -sign -rawin -inkey "$UPDATE_SIGNING_KEY" \
     -in "$TMP_DIR/update.json" -out "$TMP_DIR/update.json.sig.raw"

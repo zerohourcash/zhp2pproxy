@@ -21,12 +21,14 @@ import (
 	"strings"
 	"time"
 
-	"zhp2pproxy/internal/securefs"
+	"github.com/zerohourcash/zhp2pproxy/internal/securefs"
 )
 
 const (
 	maxManifestBytes = 1 << 20
 	maxBinaryBytes   = 128 << 20
+	officialRepoHost = "github.com"
+	officialRepoPath = "/zerohourcash/zhp2pproxy/releases/"
 )
 
 type Download struct {
@@ -113,6 +115,9 @@ func CheckAndApply(ctx context.Context, options Options) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	if !options.AllowHTTPForTest && !officialGitHubReleaseURL(manifestURL) {
+		return Result{}, errors.New("update manifest must come from the official zerohourcash/zhp2pproxy GitHub Releases repository")
+	}
 	manifestBytes, err := fetch(ctx, client, manifestURL, maxManifestBytes)
 	if err != nil {
 		return Result{}, fmt.Errorf("download update manifest: %w", err)
@@ -149,6 +154,9 @@ func CheckAndApply(ctx context.Context, options Options) (Result, error) {
 	downloadURL, err := secureURL(download.URL, options.AllowHTTPForTest)
 	if err != nil {
 		return Result{}, fmt.Errorf("invalid update download URL: %w", err)
+	}
+	if !options.AllowHTTPForTest && !officialGitHubReleaseURL(downloadURL) {
+		return Result{}, errors.New("update binary must come from the official zerohourcash/zhp2pproxy GitHub Releases repository")
 	}
 	result := Result{
 		Available:   true,
@@ -205,12 +213,41 @@ func secureURL(raw string, allowHTTP bool) (string, error) {
 	return parsed.String(), nil
 }
 
+func officialGitHubReleaseURL(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	return parsed.Scheme == "https" &&
+		strings.EqualFold(parsed.Hostname(), officialRepoHost) &&
+		parsed.Port() == "" &&
+		strings.HasPrefix(parsed.EscapedPath(), officialRepoPath) &&
+		parsed.RawQuery == "" && parsed.Fragment == "" && parsed.User == nil
+}
+
+func officialUpdateRedirectURL(raw string, allowHTTP bool) bool {
+	if allowHTTP {
+		_, err := secureURL(raw, true)
+		return err == nil
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.Fragment != "" {
+		return false
+	}
+	switch strings.ToLower(parsed.Hostname()) {
+	case "github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com":
+		return parsed.Port() == ""
+	default:
+		return false
+	}
+}
+
 func secureHTTPClient(client *http.Client, allowHTTP bool) *http.Client {
 	copyClient := *client
 	previousRedirectCheck := client.CheckRedirect
 	copyClient.CheckRedirect = func(request *http.Request, via []*http.Request) error {
-		if _, err := secureURL(request.URL.String(), allowHTTP); err != nil {
-			return fmt.Errorf("refuse insecure update redirect: %w", err)
+		if !officialUpdateRedirectURL(request.URL.String(), allowHTTP) {
+			return errors.New("refuse update redirect outside official GitHub release infrastructure")
 		}
 		if len(via) > 0 && via[0].URL.Scheme == "https" && request.URL.Scheme != "https" {
 			return errors.New("refuse HTTPS downgrade redirect")

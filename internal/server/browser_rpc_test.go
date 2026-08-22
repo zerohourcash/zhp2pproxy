@@ -10,10 +10,10 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"zhp2pproxy/internal/config"
-	"zhp2pproxy/internal/node"
-	"zhp2pproxy/internal/proxy"
-	"zhp2pproxy/pkg/jsonrpc"
+	"github.com/zerohourcash/zhp2pproxy/internal/config"
+	"github.com/zerohourcash/zhp2pproxy/internal/node"
+	"github.com/zerohourcash/zhp2pproxy/internal/proxy"
+	"github.com/zerohourcash/zhp2pproxy/pkg/jsonrpc"
 )
 
 type browserRelayP2P struct {
