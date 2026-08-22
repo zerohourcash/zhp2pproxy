@@ -8,6 +8,12 @@ wallet keys or unrestricted node administration. The project is licensed under
 
 ## Установка на Linux-сервер
 
+Установка последней официальной версии одной строкой:
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL https://github.com/zerohourcash/zhp2pproxy/releases/latest/download/install.sh | sudo bash
+```
+
 Установщик поддерживает `amd64` и `arm64`, проверяет Ed25519-подпись официального
 файла checksums, затем SHA-256 архива, создает отдельного непривилегированного
 пользователя `zhp2pproxy`, устанавливает hardened systemd unit и сразу включает
