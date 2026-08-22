@@ -95,14 +95,17 @@ peer с рабочей RPC-нодой; admin/node-control методы брау�
 
 ## Установка на Windows
 
-Поддерживаются 64-битные Windows на `x64` и `ARM64`. PowerShell и права
-администратора для обычной установки не нужны: скачай подходящий EXE и открой
-его двойным кликом:
+Код поддерживает 64-битные Windows на `x64` и `ARM64`, но в официальном
+релизе `v1.0.0` Windows-бинарники не опубликованы: для них требуется
+доверенная Authenticode-подпись в дополнение к Ed25519-подписи обновлений.
+Не распространяй локально собранные неподписанные EXE. После подключения
+сертификата официальные файлы появятся по адресам:
 
 - `https://github.com/zerohourcash/zhp2pproxy/releases/latest/download/zhp2pproxy-windows-amd64.exe`
 - `https://github.com/zerohourcash/zhp2pproxy/releases/latest/download/zhp2pproxy-windows-arm64.exe`
 
-EXE сам копирует себя в `%USERPROFILE%\zhp2pproxy\zhp2pproxy.exe`, продолжает
+Официально подписанный EXE сам копирует себя в
+`%USERPROFILE%\zhp2pproxy\zhp2pproxy.exe`, продолжает
 работу из постоянной папки, создает runtime-каталог рядом с данными ZHCASH-ноды
 и регистрирует автозагрузку текущего пользователя. Исходный файл в Downloads
 после этого больше не нужен.
