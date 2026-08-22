@@ -35,8 +35,90 @@ func TestLoadCreatesDefaultConfig(t *testing.T) {
 	if cfg.OverlayPSK != "" {
 		t.Fatalf("the shared default overlay must derive its PSK from network id, got %q", cfg.OverlayPSK)
 	}
+	if cfg.AdminToken == "" {
+		t.Fatal("default config must contain a generated admin token")
+	}
+	if !cfg.AutoUpdateEnabled || cfg.UpdateManifestURL == "" || cfg.UpdateCheckInterval < 300 {
+		t.Fatalf("secure update defaults not applied: %+v", cfg)
+	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLoadKeepsExplicitAutoUpdateOptOut(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "proxy.json")
+	if err := os.WriteFile(path, []byte(`{"auto_update_enabled":false}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AutoUpdateEnabled {
+		t.Fatal("explicit automatic update opt-out was ignored")
+	}
+}
+
+func TestLoadRepairsBlankAdminTokenAndFilePermissions(t *testing.T) {
+	if runtimeGOOS == "windows" {
+		t.Skip("POSIX permission bits are not authoritative on Windows")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "proxy.json")
+	if err := os.WriteFile(path, []byte(`{"admin_token":""}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AdminToken == "" {
+		t.Fatal("blank admin token was not repaired")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Fatalf("config mode = %o, want 600", got)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if raw["admin_token"] != cfg.AdminToken {
+		t.Fatal("generated admin token was not persisted")
+	}
+}
+
+func TestLoadRejectsUnauthenticatedNonLoopbackHTTP(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "proxy.json")
+	if err := os.WriteFile(path, []byte(`{"listen":":8081","api_token":"","allowed_ips":[]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Load(path); err == nil {
+		t.Fatal("unauthenticated non-loopback HTTP listener was accepted")
+	}
+}
+
+func TestLoadAllowsProtectedNonLoopbackHTTP(t *testing.T) {
+	for _, body := range []string{
+		`{"listen":"0.0.0.0:8081","api_token":"test-token"}`,
+		`{"listen":"[::]:8081","allowed_ips":["127.0.0.1"]}`,
+	} {
+		path := filepath.Join(t.TempDir(), "proxy.json")
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := Load(path); err != nil {
+			t.Fatalf("protected listener rejected: %v", err)
+		}
 	}
 }
 

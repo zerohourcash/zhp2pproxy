@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"zhp2pproxy/internal/config"
@@ -13,19 +14,24 @@ import (
 	"zhp2pproxy/internal/p2p"
 	"zhp2pproxy/internal/proxy"
 	"zhp2pproxy/internal/server"
+	"zhp2pproxy/internal/updater"
 )
 
 var version = "dev"
+var buildSequence = "0"
+
+const updatePublicKey = "GnbiMTDyAI1NenxfEyJZihgFGsNUWmSVkke1Z6PweJA="
 
 type localNodeRecovery struct {
-	Config             config.Config
-	Attempted          bool
-	NodeConfigPath     string
-	NodeBackupPath     string
-	ProxyBackupPath    string
-	NodeConfigChanged  bool
-	ProxyConfigChanged bool
-	Restarted          []string
+	Config              config.Config
+	Attempted           bool
+	NodeConfigPath      string
+	NodeBackupPath      string
+	ProxyBackupPath     string
+	NodeConfigChanged   bool
+	ProxyConfigChanged  bool
+	AddressIndexChanged bool
+	Restarted           []string
 }
 
 func main() {
@@ -42,6 +48,8 @@ func main() {
 		log.Fatal("-register-autostart and -unregister-autostart cannot be used together")
 	}
 	if *registerAutostart || *unregisterAutostart {
+		//lint:ignore SA4023 the Windows build has a real fallible implementation;
+		// staticcheck only sees the intentionally unsupported Unix implementation.
 		if err := handlePlatformAutostart(*configPath, *registerAutostart); err != nil {
 			log.Fatal(err)
 		}
@@ -97,6 +105,10 @@ func runProxy(parent context.Context, configPath string) error {
 		Addr:              cfg.Listen,
 		Handler:           server.New(cfg, handler, metrics),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      35 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    32 << 10,
 	}
 
 	serveErr := make(chan error, 1)
@@ -109,9 +121,13 @@ func runProxy(parent context.Context, configPath string) error {
 		serveErr <- nil
 	}()
 	go monitorLocalNode(ctx, resolvedConfigPath, cfg, local, initialPingErr)
+	updateApplied := startUpdateMonitor(ctx, cfg)
 
 	select {
 	case <-ctx.Done():
+	case result := <-updateApplied:
+		log.Printf("[update] installed %s; restarting through the process supervisor", result.Version)
+		cancel()
 	case err := <-serveErr:
 		if err != nil {
 			return err
@@ -124,7 +140,33 @@ func runProxy(parent context.Context, configPath string) error {
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("[server] shutdown: %w", err)
 	}
+	select {
+	case result := <-updateApplied:
+		return fmt.Errorf("update %s installed; restart required", result.Version)
+	default:
+	}
 	return nil
+}
+
+func startUpdateMonitor(ctx context.Context, cfg config.Config) <-chan updater.Result {
+	applied := make(chan updater.Result, 1)
+	sequence, err := strconv.ParseInt(buildSequence, 10, 64)
+	if err != nil || sequence <= 0 || !cfg.AutoUpdateEnabled {
+		if !cfg.AutoUpdateEnabled {
+			log.Printf("[update] automatic update checks disabled by config")
+		}
+		return applied
+	}
+	go updater.Monitor(ctx, updater.Options{
+		CurrentVersion:  version,
+		CurrentSequence: sequence,
+		ManifestURL:     cfg.UpdateManifestURL,
+		PublicKeyBase64: updatePublicKey,
+		Interval:        time.Duration(cfg.UpdateCheckInterval) * time.Second,
+		InitialDelay:    20 * time.Second,
+		Logf:            log.Printf,
+	}, applied)
+	return applied
 }
 
 func monitorLocalNode(ctx context.Context, configPath string, cfg config.Config, local *node.Client, initialErr error) {
@@ -176,6 +218,9 @@ func monitorLocalNode(ctx context.Context, configPath string, cfg config.Config,
 		local.Update(cfg)
 		if recovery.NodeConfigChanged {
 			log.Printf("[node] wrote loopback-only RPC settings to %s", recovery.NodeConfigPath)
+		}
+		if recovery.AddressIndexChanged {
+			log.Printf("[node] enabled addrindex=1; node restart includes one-time -reindex-chainstate")
 		}
 		if recovery.NodeBackupPath != "" {
 			log.Printf("[node] node config backup: %s", recovery.NodeBackupPath)

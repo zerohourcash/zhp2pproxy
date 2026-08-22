@@ -40,3 +40,24 @@ func TestClientUpdateSwitchesRPCWithoutReplacingClient(t *testing.T) {
 		t.Fatalf("RPC client did not switch endpoints: first=%d second=%d", firstHits.Load(), secondHits.Load())
 	}
 }
+
+func TestValidateRPCEndpointRequiresTLSOutsideLoopback(t *testing.T) {
+	for _, endpoint := range []string{
+		"http://rpc.example.org:3889/",
+		"ftp://127.0.0.1:3889/",
+		"https://user:pass@rpc.example.org/",
+	} {
+		if got := validateRPCEndpoint(endpoint); got == "" {
+			t.Fatalf("insecure endpoint %q was accepted", endpoint)
+		}
+	}
+	for _, endpoint := range []string{
+		"http://127.0.0.1:3889/",
+		"http://[::1]:3889/",
+		"https://rpc.example.org/",
+	} {
+		if got := validateRPCEndpoint(endpoint); got != "" {
+			t.Fatalf("safe endpoint %q was rejected: %s", endpoint, got)
+		}
+	}
+}

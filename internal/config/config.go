@@ -7,11 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+
+	"zhp2pproxy/internal/securefs"
 )
 
 const DefaultPath = "proxy.json"
@@ -21,60 +24,89 @@ var runtimeGOOS = runtime.GOOS
 var getenv = os.Getenv
 
 type Config struct {
-	Listen               string   `json:"listen"`
-	P2PPort              int      `json:"p2p_port"`
-	PublicEndpoint       string   `json:"public_endpoint"`
-	RPCURL               string   `json:"rpc_url"`
-	RPCHost              string   `json:"rpc_host"`
-	RPCPort              int      `json:"rpc_port"`
-	RPCUser              string   `json:"rpc_user"`
-	RPCPass              string   `json:"rpc_pass"`
-	RPCCookiePath        string   `json:"rpc_cookie_path"`
-	NodeConfigPath       string   `json:"node_config_path"`
-	BootstrapPeers       []string `json:"bootstrap_peers"`
-	BootstrapURLs        []string `json:"bootstrap_urls"`
-	RateLimit            float64  `json:"rate_limit"`
-	RateBurst            int      `json:"rate_burst"`
-	APIToken             string   `json:"api_token"`
-	AdminToken           string   `json:"admin_token"`
-	AllowedIPs           []string `json:"allowed_ips"`
-	CORSAllowedOrigins   []string `json:"cors_allowed_origins"`
-	ExposePeerInfo       bool     `json:"expose_peer_info"`
-	P2PLoadBalance       bool     `json:"p2p_load_balance"`
-	PeerStorePath        string   `json:"peer_store_path"`
-	IdentityKeyPath      string   `json:"identity_key_path"`
-	OverlayNetworkID     string   `json:"overlay_network_id"`
-	OverlayPrivate       bool     `json:"overlay_private"`
-	OverlayPSK           string   `json:"overlay_psk"`
-	OverlayMode          string   `json:"overlay_mode"`
-	ForceRelay           bool     `json:"force_relay"`
-	RelayEnabled         bool     `json:"relay_enabled"`
-	EnableIPv6           bool     `json:"enable_ipv6"`
-	EnableQUIC           bool     `json:"enable_quic"`
-	EnableNATPortMap     bool     `json:"enable_nat_port_map"`
-	EnableHolePunching   bool     `json:"enable_hole_punching"`
-	NodeP2PHost          string   `json:"node_p2p_host"`
-	NodeP2PPort          int      `json:"node_p2p_port"`
-	P2PProxyListen       string   `json:"p2p_proxy_listen"`
-	NativeP2PProxy       bool     `json:"native_p2p_proxy"`
-	MaxBodyBytes         int64    `json:"max_body_bytes"`
-	LocalRPCPreferDirect bool     `json:"local_rpc_prefer_direct"`
+	Listen                  string   `json:"listen"`
+	P2PPort                 int      `json:"p2p_port"`
+	BrowserWebTransport     bool     `json:"browser_webtransport_enabled"`
+	BrowserWebTransportPort int      `json:"browser_webtransport_port"`
+	BrowserWebRTC           bool     `json:"browser_webrtc_enabled"`
+	BrowserWebRTCPort       int      `json:"browser_webrtc_port"`
+	PublicEndpoint          string   `json:"public_endpoint"`
+	RPCURL                  string   `json:"rpc_url"`
+	RPCHost                 string   `json:"rpc_host"`
+	RPCPort                 int      `json:"rpc_port"`
+	RPCUser                 string   `json:"rpc_user"`
+	RPCPass                 string   `json:"rpc_pass"`
+	RPCCookiePath           string   `json:"rpc_cookie_path"`
+	NodeConfigPath          string   `json:"node_config_path"`
+	BootstrapPeers          []string `json:"bootstrap_peers"`
+	BootstrapURLs           []string `json:"bootstrap_urls"`
+	RateLimit               float64  `json:"rate_limit"`
+	RateBurst               int      `json:"rate_burst"`
+	APIToken                string   `json:"api_token"`
+	AdminToken              string   `json:"admin_token"`
+	AllowedIPs              []string `json:"allowed_ips"`
+	TrustedProxies          []string `json:"trusted_proxies"`
+	CORSAllowedOrigins      []string `json:"cors_allowed_origins"`
+	ExposePeerInfo          bool     `json:"expose_peer_info"`
+	P2PLoadBalance          bool     `json:"p2p_load_balance"`
+	PeerStorePath           string   `json:"peer_store_path"`
+	IdentityKeyPath         string   `json:"identity_key_path"`
+	OverlayNetworkID        string   `json:"overlay_network_id"`
+	OverlayPrivate          bool     `json:"overlay_private"`
+	OverlayPSK              string   `json:"overlay_psk"`
+	OverlayMode             string   `json:"overlay_mode"`
+	ForceRelay              bool     `json:"force_relay"`
+	RelayEnabled            bool     `json:"relay_enabled"`
+	EnableIPv6              bool     `json:"enable_ipv6"`
+	EnableQUIC              bool     `json:"enable_quic"`
+	EnableNATPortMap        bool     `json:"enable_nat_port_map"`
+	EnableHolePunching      bool     `json:"enable_hole_punching"`
+	NodeP2PHost             string   `json:"node_p2p_host"`
+	NodeP2PPort             int      `json:"node_p2p_port"`
+	P2PProxyListen          string   `json:"p2p_proxy_listen"`
+	NativeP2PProxy          bool     `json:"native_p2p_proxy"`
+	MaxBodyBytes            int64    `json:"max_body_bytes"`
+	P2PRPCRateLimit         float64  `json:"p2p_rpc_rate_limit"`
+	P2PRPCBurst             int      `json:"p2p_rpc_burst"`
+	P2PRPCMaxConcurrent     int      `json:"p2p_rpc_max_concurrent"`
+	P2PRPCResponseBytes     int64    `json:"p2p_rpc_response_bytes"`
+	P2PRPCQuorum            int      `json:"p2p_rpc_quorum"`
+	P2PMaxTunnels           int      `json:"p2p_max_tunnels"`
+	P2PMaxTunnelsPerPeer    int      `json:"p2p_max_tunnels_per_peer"`
+	P2PMaxBytesPerSecond    int64    `json:"p2p_max_bytes_per_second"`
+	P2PHandshakeTimeout     int      `json:"p2p_handshake_timeout_seconds"`
+	NodeP2PMagic            string   `json:"node_p2p_magic"`
+	LocalRPCPreferDirect    bool     `json:"local_rpc_prefer_direct"`
+	AutoUpdateEnabled       bool     `json:"auto_update_enabled"`
+	UpdateManifestURL       string   `json:"update_manifest_url"`
+	UpdateCheckInterval     int      `json:"update_check_interval_seconds"`
 }
 
 func Default() Config {
 	return Config{
-		Listen:               "127.0.0.1:8081",
-		P2PPort:              10001,
-		PublicEndpoint:       "",
-		RPCURL:               "",
-		RPCHost:              "127.0.0.1",
-		RPCPort:              3889,
-		BootstrapPeers:       []string{},
-		BootstrapURLs:        []string{"https://link.zeroscan.st/.well-known/zhp2pproxy/peers.json", "https://link.zeroscan.st/peers.json"},
-		RateLimit:            20,
-		RateBurst:            40,
-		AllowedIPs:           []string{},
-		CORSAllowedOrigins:   []string{"http://localhost:5173", "http://127.0.0.1:5173"},
+		Listen:                  "127.0.0.1:8081",
+		P2PPort:                 10001,
+		BrowserWebTransport:     true,
+		BrowserWebTransportPort: 0,
+		BrowserWebRTC:           true,
+		BrowserWebRTCPort:       0,
+		PublicEndpoint:          "",
+		RPCURL:                  "",
+		RPCHost:                 "127.0.0.1",
+		RPCPort:                 3889,
+		BootstrapPeers:          []string{},
+		BootstrapURLs:           []string{"https://link.zeroscan.st/.well-known/zhp2pproxy/peers.json", "https://link.zeroscan.st/peers.json"},
+		RateLimit:               20,
+		RateBurst:               40,
+		AllowedIPs:              []string{},
+		TrustedProxies:          []string{},
+		CORSAllowedOrigins: []string{
+			"https://wallet.zeroscan.st",
+			"https://sforwallet.io",
+			"https://surpay.su",
+			"http://localhost:5173",
+			"http://127.0.0.1:5173",
+		},
 		ExposePeerInfo:       false,
 		P2PLoadBalance:       true,
 		PeerStorePath:        "peers.json",
@@ -89,11 +121,24 @@ func Default() Config {
 		EnableNATPortMap:     false,
 		EnableHolePunching:   false,
 		NodeP2PHost:          "127.0.0.1",
-		NodeP2PPort:          3888,
+		NodeP2PPort:          38100,
 		P2PProxyListen:       "127.0.0.1:3890",
 		NativeP2PProxy:       true,
 		MaxBodyBytes:         1 << 20,
+		P2PRPCRateLimit:      5,
+		P2PRPCBurst:          10,
+		P2PRPCMaxConcurrent:  8,
+		P2PRPCResponseBytes:  16 << 20,
+		P2PRPCQuorum:         2,
+		P2PMaxTunnels:        64,
+		P2PMaxTunnelsPerPeer: 4,
+		P2PMaxBytesPerSecond: 8 << 20,
+		P2PHandshakeTimeout:  10,
+		NodeP2PMagic:         "f1cfa6d3",
 		LocalRPCPreferDirect: false,
+		AutoUpdateEnabled:    true,
+		UpdateManifestURL:    "https://link.zeroscan.st/zhp2pproxy/update.json",
+		UpdateCheckInterval:  300,
 	}
 }
 
@@ -118,7 +163,7 @@ func Load(path string) (Config, bool, error) {
 		return cfg, false, err
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := securefs.ReadFile(path)
 	if err != nil {
 		return cfg, created, err
 	}
@@ -126,6 +171,21 @@ func Load(path string) (Config, bool, error) {
 		return cfg, created, err
 	}
 	applyDefaults(&cfg)
+	if err := validateHTTPExposure(cfg); err != nil {
+		return cfg, created, err
+	}
+	if cfg.AdminToken == "" {
+		cfg.AdminToken = randomToken()
+		if cfg.AdminToken == "" {
+			return cfg, created, errors.New("generate admin token")
+		}
+		if err := updateConfigFileField(path, "admin_token", cfg.AdminToken); err != nil {
+			return cfg, created, fmt.Errorf("persist admin token: %w", err)
+		}
+	}
+	if err := protectConfigPath(path); err != nil {
+		return cfg, created, err
+	}
 	configDir := filepath.Dir(path)
 	normalizeRelativePaths(&cfg, configDir)
 	nodePathDiscovered, err := fillRPCFromNodeConfig(&cfg, configDir)
@@ -138,6 +198,22 @@ func Load(path string) (Config, bool, error) {
 		}
 	}
 	return cfg, created, nil
+}
+
+func validateHTTPExposure(cfg Config) error {
+	host, _, err := net.SplitHostPort(cfg.Listen)
+	if err != nil {
+		return fmt.Errorf("invalid listen address %q: %w", cfg.Listen, err)
+	}
+	host = strings.TrimSpace(strings.Trim(host, "[]"))
+	loopback := strings.EqualFold(host, "localhost")
+	if ip := net.ParseIP(host); ip != nil {
+		loopback = ip.IsLoopback()
+	}
+	if !loopback && cfg.APIToken == "" && len(cfg.AllowedIPs) == 0 {
+		return errors.New("non-loopback HTTP listen requires api_token or allowed_ips")
+	}
+	return nil
 }
 
 func ResolvePath(path string) string {
@@ -164,15 +240,36 @@ func randomToken() string {
 }
 
 func Save(path string, cfg Config) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
+	if runtimeGOOS != "windows" {
+		// #nosec G302 -- directories require execute permission; 0700 is owner-only.
+		if err := os.Chmod(filepath.Dir(path), 0700); err != nil {
+			return err
+		}
+	}
+	// #nosec G117 -- tokens are intentionally persisted in an owner-only 0600 config.
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
 	data = append(data, '\n')
-	return os.WriteFile(path, data, 0644)
+	return securefs.WriteFile(path, data, 0600)
+}
+
+func protectConfigPath(path string) error {
+	if runtimeGOOS == "windows" {
+		return nil
+	}
+	// #nosec G302 -- directories require execute permission; 0700 is owner-only.
+	if err := os.Chmod(filepath.Dir(path), 0700); err != nil {
+		return fmt.Errorf("protect config directory: %w", err)
+	}
+	if err := os.Chmod(path, 0600); err != nil {
+		return fmt.Errorf("protect config file: %w", err)
+	}
+	return nil
 }
 
 func normalizeRelativePaths(cfg *Config, baseDir string) {
@@ -224,6 +321,39 @@ func applyDefaults(cfg *Config) {
 	if cfg.MaxBodyBytes <= 0 {
 		cfg.MaxBodyBytes = def.MaxBodyBytes
 	}
+	if cfg.P2PRPCRateLimit <= 0 {
+		cfg.P2PRPCRateLimit = def.P2PRPCRateLimit
+	}
+	if cfg.P2PRPCBurst <= 0 {
+		cfg.P2PRPCBurst = def.P2PRPCBurst
+	}
+	if cfg.P2PRPCMaxConcurrent <= 0 {
+		cfg.P2PRPCMaxConcurrent = def.P2PRPCMaxConcurrent
+	}
+	if cfg.P2PRPCResponseBytes <= 0 {
+		cfg.P2PRPCResponseBytes = def.P2PRPCResponseBytes
+	}
+	if cfg.P2PRPCQuorum <= 0 {
+		cfg.P2PRPCQuorum = def.P2PRPCQuorum
+	}
+	if cfg.P2PRPCQuorum > 3 {
+		cfg.P2PRPCQuorum = 3
+	}
+	if cfg.P2PMaxTunnels <= 0 {
+		cfg.P2PMaxTunnels = def.P2PMaxTunnels
+	}
+	if cfg.P2PMaxTunnelsPerPeer <= 0 {
+		cfg.P2PMaxTunnelsPerPeer = def.P2PMaxTunnelsPerPeer
+	}
+	if cfg.P2PMaxBytesPerSecond <= 0 {
+		cfg.P2PMaxBytesPerSecond = def.P2PMaxBytesPerSecond
+	}
+	if cfg.P2PHandshakeTimeout <= 0 {
+		cfg.P2PHandshakeTimeout = def.P2PHandshakeTimeout
+	}
+	if cfg.NodeP2PMagic == "" {
+		cfg.NodeP2PMagic = def.NodeP2PMagic
+	}
 	if cfg.NodeP2PHost == "" {
 		cfg.NodeP2PHost = def.NodeP2PHost
 	}
@@ -235,6 +365,12 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.CORSAllowedOrigins == nil {
 		cfg.CORSAllowedOrigins = def.CORSAllowedOrigins
+	}
+	if cfg.UpdateManifestURL == "" {
+		cfg.UpdateManifestURL = def.UpdateManifestURL
+	}
+	if cfg.UpdateCheckInterval < 300 {
+		cfg.UpdateCheckInterval = def.UpdateCheckInterval
 	}
 }
 
@@ -282,7 +418,7 @@ func fillRPCFromNodeConfig(cfg *Config, configDir string) (bool, error) {
 }
 
 func updateConfigFileField(path, key string, value any) error {
-	data, err := os.ReadFile(path)
+	data, err := securefs.ReadFile(path)
 	if err != nil {
 		return err
 	}
@@ -298,7 +434,7 @@ func updateConfigFileField(path, key string, value any) error {
 		return err
 	}
 	data = append(data, '\n')
-	return os.WriteFile(path, data, 0644)
+	return securefs.WriteFile(path, data, 0600)
 }
 
 func discoverNodeConfigPath(configDir string) (string, bool) {
@@ -341,13 +477,12 @@ func nodeConfigCandidates(configDir string) []string {
 }
 
 func readNodeConfig(path string) (map[string]string, error) {
-	f, err := os.Open(path)
+	data, err := securefs.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
 	values := make(map[string]string)
-	scanner := bufio.NewScanner(f)
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -423,7 +558,7 @@ func migrateLegacyWindowsState(targetConfig string) error {
 			continue
 		}
 		seen[legacyConfig] = struct{}{}
-		data, err := os.ReadFile(legacyConfig)
+		data, err := securefs.ReadFile(legacyConfig)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
@@ -471,17 +606,17 @@ func copyRuntimeFileIfPresent(source, destination string, mode os.FileMode) erro
 	if source == "" || source == destination {
 		return nil
 	}
-	if _, err := os.Stat(destination); err == nil {
+	if _, err := securefs.Stat(destination); err == nil {
 		return nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	data, err := os.ReadFile(source)
+	data, err := securefs.ReadFile(source)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(destination, data, mode)
+	return securefs.WriteFile(destination, data, mode)
 }

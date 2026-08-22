@@ -4,7 +4,8 @@ param(
     [string]$InstallDir = (Join-Path $env:USERPROFILE "zhp2pproxy"),
     [string]$ServiceName = "ZHP2PProxy",
     [ValidateSet("Prompt", "Apply", "Skip")]
-    [string]$NodeConfigRepair = "Prompt"
+    [string]$NodeConfigRepair = "Prompt",
+    [switch]$AllowUnsignedLocalBuild
 )
 
 Set-StrictMode -Version Latest
@@ -237,18 +238,42 @@ function Write-Utf8NoBom {
     [IO.File]::WriteAllText($Path, $Content, $utf8NoBom)
 }
 
+function Test-MinimalZHCashRpcFallback {
+    param([string]$NodeConfigPath)
+
+    if (-not (Test-Path -LiteralPath $NodeConfigPath -PathType Leaf)) {
+        return $false
+    }
+    $settings = @{}
+    foreach ($line in ([IO.File]::ReadAllLines($NodeConfigPath))) {
+        if ($line -match "[#;]") {
+            return $false
+        }
+        if ($line -match "^\s*([^=]+?)\s*=\s*(.*?)\s*$") {
+            $settings[$Matches[1].Trim().ToLowerInvariant()] = $Matches[2].Trim()
+        }
+    }
+    return $settings["server"] -eq "1" -and
+        $settings["rpcuser"] -and
+        $settings["rpcpassword"] -and
+        $settings["rpcport"] -eq "3889" -and
+        $settings["rpcbind"] -eq "127.0.0.1" -and
+        $settings["rpcallowip"] -eq "127.0.0.1" -and
+        $settings["txindex"] -eq "1" -and
+        $settings["addrindex"] -eq "1"
+}
+
 function Set-MinimalZHCashRpcFallback {
     param(
         [string]$NodeConfigPath,
         [string]$ProxyConfigPath
     )
 
-    $marker = "# BEGIN ZHP2PProxy managed RPC fallback"
     $existingContent = ""
     if (Test-Path -LiteralPath $NodeConfigPath -PathType Leaf) {
         $existingContent = [IO.File]::ReadAllText($NodeConfigPath)
-        if ($existingContent.Contains($marker)) {
-            Write-InstallLog "Minimal RPC fallback already exists in $NodeConfigPath"
+        if (Test-MinimalZHCashRpcFallback -NodeConfigPath $NodeConfigPath) {
+            Write-InstallLog "Comment-free minimal RPC fallback already exists in $NodeConfigPath"
             return $false
         }
         $backupPath = "$NodeConfigPath.before-zhp2pproxy-$(Get-Date -Format 'yyyyMMddHHmmss').bak"
@@ -260,25 +285,40 @@ function Set-MinimalZHCashRpcFallback {
 
     $preservedLines = @()
     if ($existingContent) {
-        $preservedLines = $existingContent -split "`r?`n" | Where-Object {
-            $_ -notmatch "^\s*(server|rpcuser|rpcpassword|rpcport|rpcbind|rpcallowip)\s*="
+        $inLegacyManagedBlock = $false
+        foreach ($line in ($existingContent -split "`r?`n")) {
+            $trimmed = $line.Trim()
+            if ($trimmed -eq "# BEGIN ZHP2PProxy managed RPC fallback") {
+                $inLegacyManagedBlock = $true
+                continue
+            }
+            if ($inLegacyManagedBlock) {
+                if ($trimmed -eq "# END ZHP2PProxy managed RPC fallback") {
+                    $inLegacyManagedBlock = $false
+                }
+                continue
+            }
+            $cleanLine = ($line -split "[#;]", 2)[0].TrimEnd()
+            if (-not $cleanLine.Trim()) {
+                continue
+            }
+            if ($cleanLine -notmatch "^\s*(server|rpcuser|rpcpassword|rpcport|rpcbind|rpcallowip|txindex|addrindex)\s*=") {
+                $preservedLines += $cleanLine
+            }
         }
     }
     $rpcPassword = [Guid]::NewGuid().ToString("N") + [Guid]::NewGuid().ToString("N")
     $managedLines = @(
-        "",
-        $marker,
-        "# Local RPC only. Generated after a failed local-node connectivity check.",
         "server=1",
         "rpcuser=zhp2pproxy",
         "rpcpassword=$rpcPassword",
         "rpcport=3889",
         "rpcbind=127.0.0.1",
         "rpcallowip=127.0.0.1",
-        "# END ZHP2PProxy managed RPC fallback",
-        ""
+        "txindex=1",
+        "addrindex=1"
     )
-    Write-Utf8NoBom -Path $NodeConfigPath -Content (($preservedLines + $managedLines) -join [Environment]::NewLine)
+    Write-Utf8NoBom -Path $NodeConfigPath -Content ((($preservedLines + $managedLines) -join [Environment]::NewLine) + [Environment]::NewLine)
 
     $proxyBackupPath = "$ProxyConfigPath.before-node-fallback-$(Get-Date -Format 'yyyyMMddHHmmss').bak"
     Copy-Item -LiteralPath $ProxyConfigPath -Destination $proxyBackupPath
@@ -292,7 +332,7 @@ function Set-MinimalZHCashRpcFallback {
     $proxyConfig | Add-Member -NotePropertyName rpc_cookie_path -NotePropertyValue "" -Force
     $json = $proxyConfig | ConvertTo-Json -Depth 20
     Write-Utf8NoBom -Path $ProxyConfigPath -Content ($json + [Environment]::NewLine)
-    Write-InstallLog "Wrote a loopback-only minimal RPC fallback to $NodeConfigPath"
+    Write-InstallLog "Wrote a comment-free loopback RPC fallback with txindex=1 and addrindex=1 to $NodeConfigPath"
     return $true
 }
 
@@ -349,6 +389,15 @@ try {
     }
     if (-not (Test-Path -LiteralPath $packageConfig -PathType Leaf)) {
         throw "Archive does not contain the safe config template."
+    }
+    $authenticode = Get-AuthenticodeSignature -LiteralPath $packageExe
+    if ($authenticode.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
+        if (-not $AllowUnsignedLocalBuild) {
+            throw "The downloaded executable has no valid Authenticode signature (status: $($authenticode.Status)). Refusing installation."
+        }
+        Write-Warning "Unsigned local build accepted only because -AllowUnsignedLocalBuild was explicitly set."
+    } else {
+        Write-InstallLog "Verified Authenticode publisher: $($authenticode.SignerCertificate.Subject)"
     }
 
     $startupTaskName = "$ServiceName-Startup"
@@ -585,16 +634,17 @@ try {
     $localNodeEvidence = $nodeProcess -or (Test-Path -LiteralPath $defaultNodeConfig -PathType Leaf)
     $minimalConfigWritten = $false
     if ($health -and -not $health.local_node.connected -and $localNodeEvidence) {
-        $fallbackMarkerExists = (Test-Path -LiteralPath $defaultNodeConfig -PathType Leaf) -and ([IO.File]::ReadAllText($defaultNodeConfig).Contains("# BEGIN ZHP2PProxy managed RPC fallback"))
-        $applyNodeRepair = $NodeConfigRepair -eq "Apply" -and -not $fallbackMarkerExists
-        if ($fallbackMarkerExists) {
-            Write-InstallLog "Minimal RPC fallback already exists; no config prompt or rewrite is needed"
+        $fallbackReady = Test-MinimalZHCashRpcFallback -NodeConfigPath $defaultNodeConfig
+        $applyNodeRepair = $NodeConfigRepair -eq "Apply" -and -not $fallbackReady
+        if ($fallbackReady) {
+            Write-InstallLog "Comment-free minimal RPC fallback already exists; no config prompt or rewrite is needed"
         } elseif ($NodeConfigRepair -eq "Prompt") {
             Write-Warning "A local ZHCASH node/config was found, but its RPC is unavailable."
             Write-Host "The fallback will back up and repair only RPC settings in:"
             Write-Host "  $defaultNodeConfig"
             Write-Host "  $installedConfig"
             Write-Host "It will bind RPC only to 127.0.0.1:3889 with a new random password."
+            Write-Host "It will enable txindex=1 and addrindex=1; the first restart requires -reindex-chainstate."
             $answer = Read-Host "Apply this minimal local RPC fallback? [y/N]"
             $applyNodeRepair = $answer -match "^(y|yes|д|да)$"
         }
@@ -602,7 +652,7 @@ try {
             $minimalConfigWritten = Set-MinimalZHCashRpcFallback `
                 -NodeConfigPath $defaultNodeConfig `
                 -ProxyConfigPath $installedConfig
-        } elseif (-not $fallbackMarkerExists) {
+        } elseif (-not $fallbackReady) {
             Write-InstallLog "Skipped local node config repair; P2P-only operation remains available"
         }
     }
@@ -635,7 +685,7 @@ try {
         Write-Warning "Health endpoint did not answer. Inspect $(Join-Path $InstallDir 'zhp2pproxy.log')"
     }
     if ($minimalConfigWritten) {
-        Write-Warning "A minimal local RPC config was created. Restart the ZHCASH node, then close and reopen zhp2pproxy.exe."
+        Write-Warning "A comment-free local RPC config was created. Start the ZHCASH node once with -reindex-chainstate, then close and reopen zhp2pproxy.exe."
     }
 } finally {
     if (Test-Path -LiteralPath $tempDir) {

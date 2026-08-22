@@ -1,7 +1,16 @@
-# Runtime identity and private overlay/RPC configuration
+# Runtime identity and private overlay/RPC/node configuration. Keep the broad
+# patterns: the application intentionally creates timestamped migration and
+# rollback copies that must never be staged with `git add -A`.
 identity.key*
-proxy.json
-peers.json
+proxy.json*
+peers.json*
+zerohour.conf*
+*.pem
+*.key
+*.p12
+*.pfx
+*.bak
+!release/update-public.pem
 
 # Built artifacts and rollback binaries
 dist/
@@ -13,3 +22,9 @@ zhp2pproxy.*
 *.log
 .env
 .env.*
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

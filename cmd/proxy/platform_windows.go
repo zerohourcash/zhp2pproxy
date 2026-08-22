@@ -243,8 +243,9 @@ func recoverPlatformLocalNode(proxyConfigPath string, cfg config.Config) (localN
 	result.ProxyBackupPath = repair.ProxyBackupPath
 	result.NodeConfigChanged = repair.NodeConfigChanged
 	result.ProxyConfigChanged = repair.ProxyConfigChanged
+	result.AddressIndexChanged = repair.AddressIndexChanged
 	if len(processes) > 0 {
-		restarted, err := restartWindowsNodeProcesses(processes)
+		restarted, err := restartWindowsNodeProcesses(processes, repair.AddressIndexChanged)
 		if err != nil {
 			return result, err
 		}
@@ -302,7 +303,7 @@ func windowsProcessImagePath(pid uint32) (string, error) {
 	return windows.UTF16ToString(buffer[:size]), nil
 }
 
-func restartWindowsNodeProcesses(processes []windowsNodeProcess) ([]string, error) {
+func restartWindowsNodeProcesses(processes []windowsNodeProcess, reindexChainstate bool) ([]string, error) {
 	var restarted []string
 	for _, process := range processes {
 		handle, err := windows.OpenProcess(windows.SYNCHRONIZE, false, process.PID)
@@ -322,7 +323,11 @@ func restartWindowsNodeProcesses(processes []windowsNodeProcess) ([]string, erro
 		if waitResult != windows.WAIT_OBJECT_0 {
 			return restarted, fmt.Errorf("%s process %d did not stop safely within 3 minutes", process.Name, process.PID)
 		}
-		command := exec.Command(process.Path)
+		var args []string
+		if reindexChainstate {
+			args = append(args, "-reindex-chainstate")
+		}
+		command := exec.Command(process.Path, args...)
 		command.Dir = filepath.Dir(process.Path)
 		command.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NEW_PROCESS_GROUP}
 		if err := command.Start(); err != nil {

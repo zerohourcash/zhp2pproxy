@@ -4,8 +4,11 @@ set -Eeuo pipefail
 PROGRAM="zhp2pproxy"
 SERVICE_NAME="zhp2pproxy.service"
 BASE_URL="${ZHP2P_BASE_URL:-https://link.zeroscan.st/zhp2pproxy}"
-TARGET_USER="${ZHP2P_USER:-$(id -un)}"
+TARGET_USER="${ZHP2P_USER:-}"
 SKIP_SYSTEMD="${ZHP2P_SKIP_SYSTEMD:-0}"
+UPDATE_PUBLIC_KEY_PEM='-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAGnbiMTDyAI1NenxfEyJZihgFGsNUWmSVkke1Z6PweJA=
+-----END PUBLIC KEY-----'
 
 log() {
   printf '[zhp2pproxy-install] %s\n' "$*"
@@ -24,7 +27,7 @@ download() {
   local url="$1"
   local destination="$2"
   if command -v curl >/dev/null 2>&1; then
-    curl --fail --location --proto '=https' --tlsv1.2 \
+    curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
       --retry 3 --retry-delay 1 --connect-timeout 10 --max-time 180 \
       --output "$destination" "$url"
     return
@@ -56,6 +59,8 @@ fi
 
 need_command tar
 need_command sha256sum
+need_command openssl
+need_command base64
 need_command install
 need_command sed
 need_command getent
@@ -64,12 +69,39 @@ need_command cut
 need_command find
 need_command mktemp
 
+CREATED_SERVICE_USER=0
+if [[ -z "$TARGET_USER" ]]; then
+  if [[ "$EUID" -eq 0 && "$SKIP_SYSTEMD" != "1" ]]; then
+    if [[ -f /root/zhp2pproxy/proxy.json && -f /etc/systemd/system/zhp2pproxy.service ]]; then
+      TARGET_USER="root"
+      log "preserving the existing root-owned installation; use ZHP2P_USER=zhp2pproxy for an explicit privilege migration"
+    else
+      TARGET_USER="zhp2pproxy"
+      if ! getent passwd "$TARGET_USER" >/dev/null; then
+        need_command useradd
+        NOLOGIN_SHELL="$(command -v nologin || true)"
+        [[ -n "$NOLOGIN_SHELL" ]] || NOLOGIN_SHELL="/usr/sbin/nologin"
+        useradd --system --user-group --create-home \
+          --home-dir /var/lib/zhp2pproxy --shell "$NOLOGIN_SHELL" "$TARGET_USER"
+        CREATED_SERVICE_USER=1
+        log "created unprivileged system user $TARGET_USER"
+      fi
+    fi
+  else
+    TARGET_USER="$(id -un)"
+  fi
+fi
+
 TARGET_PASSWD="$(getent passwd "$TARGET_USER" || true)"
 [[ -n "$TARGET_PASSWD" ]] || fail "system user does not exist: $TARGET_USER"
 TARGET_GROUP="${ZHP2P_GROUP:-$(id -gn "$TARGET_USER")}"
 TARGET_HOME="${ZHP2P_HOME:-$(printf '%s' "$TARGET_PASSWD" | cut -d: -f6)}"
 [[ -n "$TARGET_HOME" && "$TARGET_HOME" == /* ]] || fail "invalid home directory for $TARGET_USER"
-INSTALL_DIR="${ZHP2P_INSTALL_DIR:-$TARGET_HOME/zhp2pproxy}"
+if [[ "$TARGET_USER" == "zhp2pproxy" && -z "${ZHP2P_INSTALL_DIR:-}" ]]; then
+  INSTALL_DIR="$TARGET_HOME"
+else
+  INSTALL_DIR="${ZHP2P_INSTALL_DIR:-$TARGET_HOME/zhp2pproxy}"
+fi
 [[ "$INSTALL_DIR" == /* ]] || fail "installation directory must be absolute"
 [[ "$INSTALL_DIR" != "/" ]] || fail "refusing to use / as installation directory"
 
@@ -77,7 +109,9 @@ ARCH="$(resolve_arch)"
 ARCHIVE="zhp2pproxy-linux-${ARCH}.tar.gz"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/zhp2pproxy-install.XXXXXX")"
 cleanup() {
-  rm -f "$TMP_DIR/$ARCHIVE" "$TMP_DIR/SHA256SUMS" "$TMP_DIR/rendered.service"
+  rm -f "$TMP_DIR/$ARCHIVE" "$TMP_DIR/SHA256SUMS" \
+    "$TMP_DIR/SHA256SUMS.sig" "$TMP_DIR/SHA256SUMS.sig.raw" \
+    "$TMP_DIR/update-public.pem" "$TMP_DIR/rendered.service"
   if [[ -d "$TMP_DIR/unpacked" ]]; then
     find "$TMP_DIR/unpacked" -type f -delete
     find "$TMP_DIR/unpacked" -depth -type d -empty -delete
@@ -89,6 +123,17 @@ trap cleanup EXIT
 log "downloading $ARCHIVE"
 download "$BASE_URL/$ARCHIVE" "$TMP_DIR/$ARCHIVE"
 download "$BASE_URL/SHA256SUMS" "$TMP_DIR/SHA256SUMS"
+download "$BASE_URL/SHA256SUMS.sig" "$TMP_DIR/SHA256SUMS.sig"
+
+printf '%s\n' "$UPDATE_PUBLIC_KEY_PEM" >"$TMP_DIR/update-public.pem"
+base64 --decode "$TMP_DIR/SHA256SUMS.sig" >"$TMP_DIR/SHA256SUMS.sig.raw" \
+  || fail "release checksum signature is not valid base64"
+openssl pkeyutl -verify -pubin -rawin \
+  -inkey "$TMP_DIR/update-public.pem" \
+  -in "$TMP_DIR/SHA256SUMS" \
+  -sigfile "$TMP_DIR/SHA256SUMS.sig.raw" >/dev/null \
+  || fail "release checksum signature verification failed"
+log "verified official Ed25519 release signature"
 
 EXPECTED_LINE="$(awk -v file="$ARCHIVE" '$2 == file || $2 == "*" file { print $1 "  " file; exit }' "$TMP_DIR/SHA256SUMS")"
 [[ -n "$EXPECTED_LINE" ]] || fail "checksum for $ARCHIVE is missing"
@@ -118,9 +163,22 @@ install -m 0600 -o "$TARGET_USER" -g "$TARGET_GROUP" \
   "$PACKAGE_DIR/proxy.install.json" "$INSTALL_DIR/proxy.example.json"
 
 if [[ ! -f "$INSTALL_DIR/proxy.json" ]]; then
-  install -m 0600 -o "$TARGET_USER" -g "$TARGET_GROUP" \
-    "$PACKAGE_DIR/proxy.install.json" "$INSTALL_DIR/proxy.json"
-  log "created $INSTALL_DIR/proxy.json"
+  LEGACY_RUNTIME_DIR="${ZHP2P_LEGACY_RUNTIME_DIR:-/root/zhp2pproxy}"
+  if [[ "$TARGET_USER" == "zhp2pproxy" && "$LEGACY_RUNTIME_DIR" != "$INSTALL_DIR" && -f "$LEGACY_RUNTIME_DIR/proxy.json" ]]; then
+    install -m 0600 -o "$TARGET_USER" -g "$TARGET_GROUP" \
+      "$LEGACY_RUNTIME_DIR/proxy.json" "$INSTALL_DIR/proxy.json"
+    for runtime_file in identity.key peers.json; do
+      if [[ -f "$LEGACY_RUNTIME_DIR/$runtime_file" ]]; then
+        install -m 0600 -o "$TARGET_USER" -g "$TARGET_GROUP" \
+          "$LEGACY_RUNTIME_DIR/$runtime_file" "$INSTALL_DIR/$runtime_file"
+      fi
+    done
+    log "migrated existing runtime state from $LEGACY_RUNTIME_DIR"
+  else
+    install -m 0600 -o "$TARGET_USER" -g "$TARGET_GROUP" \
+      "$PACKAGE_DIR/proxy.install.json" "$INSTALL_DIR/proxy.json"
+    log "created $INSTALL_DIR/proxy.json"
+  fi
 else
   log "kept existing proxy.json, identity.key and peers.json"
 fi
@@ -164,6 +222,9 @@ systemctl is-active --quiet "$SERVICE_NAME" || {
 }
 
 log "service is active and enabled at boot"
+if [[ "$CREATED_SERVICE_USER" == "1" ]]; then
+  log "service runs as the unprivileged user $TARGET_USER"
+fi
 log "installation directory: $INSTALL_DIR"
 log "config: $INSTALL_DIR/proxy.json"
 log "status: systemctl status $SERVICE_NAME --no-pager -l"

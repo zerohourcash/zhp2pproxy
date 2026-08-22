@@ -35,6 +35,7 @@ func (p *healthTestP2P) Publish(context.Context, []byte) error     { return nil 
 func (p *healthTestP2P) PeerID() string                            { return "test-peer-id" }
 func (p *healthTestP2P) NetworkID() string                         { return "test-network" }
 func (p *healthTestP2P) ConnectedPeerCount() int                   { return p.peers }
+func (p *healthTestP2P) NodeP2PStatus() any                        { return map[string]any{"enabled": true} }
 
 func TestHealthReportsLocalNodeAndP2PConnectivity(t *testing.T) {
 	rpcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

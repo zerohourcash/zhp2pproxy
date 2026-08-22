@@ -17,6 +17,7 @@ func TestAdminProbeTargetsRequestedPeer(t *testing.T) {
 	handler := NewHandler(cfg, node.NewClient(cfg), p2p, &Metrics{})
 	body := bytes.NewBufferString(`{"peer_id":"12D3KooWTest","method":"getblockcount","params":[]}`)
 	request := httptest.NewRequest(http.MethodPost, "/admin/probe", body)
+	request.Header.Set("Content-Type", "application/json")
 	request.RemoteAddr = "127.0.0.1:12345"
 	recorder := httptest.NewRecorder()
 	handler.AdminProbe(recorder, request)
