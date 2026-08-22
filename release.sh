@@ -19,14 +19,14 @@ WINDOWS_VERIFY_COMMAND="${WINDOWS_VERIFY_COMMAND:-}"
 RELEASE_WINDOWS="${RELEASE_WINDOWS:-1}"
 ALLOW_DIRTY_LOCAL_RELEASE="${ALLOW_DIRTY_LOCAL_RELEASE:-0}"
 ARCHES=(amd64 arm64)
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/zhp2pproxy-release.XXXXXX")"
+TMP_DIR=""
 
 [[ "$VERSION" =~ ^[0-9A-Za-z._-]+$ ]] || {
   printf 'version contains unsupported characters: %s\n' "$VERSION" >&2
   exit 1
 }
-[[ "$BUILD_SEQUENCE" =~ ^[0-9]+$ ]] || {
-  printf 'BUILD_SEQUENCE must contain only decimal digits\n' >&2
+[[ "$BUILD_SEQUENCE" =~ ^[0-9]{14,18}$ ]] || {
+  printf 'BUILD_SEQUENCE must contain 14..18 decimal digits; use a monotonic UTC value such as YYYYMMDDhhmmss\n' >&2
   exit 1
 }
 [[ "$RELEASE_WINDOWS" == "0" || "$RELEASE_WINDOWS" == "1" ]] || {
@@ -34,8 +34,10 @@ TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/zhp2pproxy-release.XXXXXX")"
   exit 1
 }
 
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/zhp2pproxy-release.XXXXXX")"
+
 cleanup() {
-  if [[ -d "$TMP_DIR" ]]; then
+  if [[ -n "$TMP_DIR" && -d "$TMP_DIR" ]]; then
     find "$TMP_DIR" -type f -delete
     find "$TMP_DIR" -depth -type d -empty -delete
     rmdir "$TMP_DIR" 2>/dev/null || true

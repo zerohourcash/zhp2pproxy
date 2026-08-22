@@ -14,6 +14,10 @@ if [[ -n "$unformatted" ]]; then
 fi
 
 bash -n build.sh install.sh release.sh scripts/check-release-hygiene.sh scripts/ci.sh
+if BUILD_SEQUENCE=2026082202 RELEASE_WINDOWS=0 ALLOW_DIRTY_LOCAL_RELEASE=1 ./release.sh >/dev/null 2>&1; then
+  printf 'release.sh accepted a non-monotonic short BUILD_SEQUENCE\n' >&2
+  exit 1
+fi
 "$ROOT/scripts/check-release-hygiene.sh"
 "$GO_BIN" mod tidy -diff
 "$GO_BIN" test -race ./...

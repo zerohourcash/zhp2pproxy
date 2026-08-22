@@ -27,6 +27,9 @@ The release command requires:
 
 - a clean worktree at an exact Git tag;
 - `UPDATE_SIGNING_KEY` pointing to the offline Ed25519 private key;
+- a 14..18 digit monotonic `BUILD_SEQUENCE`; the default UTC
+  `YYYYMMDDhhmmss` value should normally be used so a release cannot sort below
+  older timestamp-based builds;
 - for a Windows release, `WINDOWS_SIGN_COMMAND` signing one EXE path with
   Authenticode and `WINDOWS_VERIFY_COMMAND` independently validating it;
 - `PUBLISH_DIR` set to a staging directory, never directly to a live web root.

@@ -42,7 +42,7 @@ func main() {
 	unregisterAutostart := flag.Bool("unregister-autostart", false, "remove current Windows user autostart registration")
 	flag.Parse()
 	if *showVersion {
-		log.Printf("zhp2pproxy %s", version)
+		log.Printf("zhp2pproxy %s sequence=%s", version, buildSequence)
 		return
 	}
 	if *registerAutostart && *unregisterAutostart {
@@ -64,6 +64,7 @@ func main() {
 func runProxy(parent context.Context, configPath string) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
+	log.Printf("[version] zhp2pproxy %s sequence=%s", version, buildSequence)
 
 	resolvedConfigPath := config.ResolvePath(configPath)
 	cfg, created, err := config.Load(resolvedConfigPath)
