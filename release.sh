@@ -16,6 +16,7 @@ BUILD_SEQUENCE="${BUILD_SEQUENCE:-$(date -u +%Y%m%d%H%M%S)}"
 UPDATE_SIGNING_KEY="${UPDATE_SIGNING_KEY:-}"
 WINDOWS_SIGN_COMMAND="${WINDOWS_SIGN_COMMAND:-}"
 WINDOWS_VERIFY_COMMAND="${WINDOWS_VERIFY_COMMAND:-}"
+RELEASE_WINDOWS="${RELEASE_WINDOWS:-1}"
 ALLOW_DIRTY_LOCAL_RELEASE="${ALLOW_DIRTY_LOCAL_RELEASE:-0}"
 ARCHES=(amd64 arm64)
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/zhp2pproxy-release.XXXXXX")"
@@ -26,6 +27,10 @@ TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/zhp2pproxy-release.XXXXXX")"
 }
 [[ "$BUILD_SEQUENCE" =~ ^[0-9]+$ ]] || {
   printf 'BUILD_SEQUENCE must contain only decimal digits\n' >&2
+  exit 1
+}
+[[ "$RELEASE_WINDOWS" == "0" || "$RELEASE_WINDOWS" == "1" ]] || {
+  printf 'RELEASE_WINDOWS must be 0 or 1\n' >&2
   exit 1
 }
 
@@ -55,14 +60,16 @@ if [[ -n "$PUBLISH_DIR" ]]; then
     printf 'refusing to publish without UPDATE_SIGNING_KEY\n' >&2
     exit 1
   }
-  [[ -n "$WINDOWS_SIGN_COMMAND" ]] || {
-    printf 'refusing to publish without WINDOWS_SIGN_COMMAND\n' >&2
-    exit 1
-  }
-  [[ -n "$WINDOWS_VERIFY_COMMAND" ]] || {
-    printf 'refusing to publish without WINDOWS_VERIFY_COMMAND\n' >&2
-    exit 1
-  }
+  if [[ "$RELEASE_WINDOWS" == "1" ]]; then
+    [[ -n "$WINDOWS_SIGN_COMMAND" ]] || {
+      printf 'refusing to publish Windows without WINDOWS_SIGN_COMMAND\n' >&2
+      exit 1
+    }
+    [[ -n "$WINDOWS_VERIFY_COMMAND" ]] || {
+      printf 'refusing to publish Windows without WINDOWS_VERIFY_COMMAND\n' >&2
+      exit 1
+    }
+  fi
   [[ -n "$SOURCE_TAG" ]] || {
     printf 'refusing to publish a commit without an exact Git tag\n' >&2
     exit 1
@@ -153,30 +160,32 @@ for arch in "${ARCHES[@]}"; do
   install -m 0755 "$package_dir/zhp2pproxy" "$TMP_DIR/$package.bin"
 done
 
-for arch in "${ARCHES[@]}"; do
-  package="zhp2pproxy-windows-$arch"
-  package_dir="$TMP_DIR/$package"
-  mkdir "$package_dir"
-  (
-    cd "$ROOT"
-    CGO_ENABLED=0 GOOS=windows GOARCH="$arch" "$GO_BIN" build \
-      -trimpath -ldflags "-s -w -X main.version=$VERSION -X main.buildSequence=$BUILD_SEQUENCE" \
-      -o "$package_dir/zhp2pproxy.exe" ./cmd/proxy
-  )
-  sign_windows_binary "$package_dir/zhp2pproxy.exe"
-  install -m 0644 "$ROOT/README.md" "$package_dir/README.md"
-  install -m 0644 "$ROOT/LICENSE" "$package_dir/LICENSE"
-  install -m 0644 "$ROOT/NOTICE" "$package_dir/NOTICE"
-  install -m 0644 "$ROOT/SECURITY.md" "$package_dir/SECURITY.md"
-  install -m 0644 "$ROOT/THREAT_MODEL.md" "$package_dir/THREAT_MODEL.md"
-  cp -R "$THIRD_PARTY_DIR" "$package_dir/THIRD_PARTY_LICENSES"
-  install -m 0600 "$ROOT/proxy.install.json" "$package_dir/proxy.install.json"
-  install -m 0755 "$package_dir/zhp2pproxy.exe" "$TMP_DIR/$package.exe"
-  (
-    cd "$TMP_DIR"
-    zip -q -r "$package.zip" "$package"
-  )
-done
+if [[ "$RELEASE_WINDOWS" == "1" ]]; then
+  for arch in "${ARCHES[@]}"; do
+    package="zhp2pproxy-windows-$arch"
+    package_dir="$TMP_DIR/$package"
+    mkdir "$package_dir"
+    (
+      cd "$ROOT"
+      CGO_ENABLED=0 GOOS=windows GOARCH="$arch" "$GO_BIN" build \
+        -trimpath -ldflags "-s -w -X main.version=$VERSION -X main.buildSequence=$BUILD_SEQUENCE" \
+        -o "$package_dir/zhp2pproxy.exe" ./cmd/proxy
+    )
+    sign_windows_binary "$package_dir/zhp2pproxy.exe"
+    install -m 0644 "$ROOT/README.md" "$package_dir/README.md"
+    install -m 0644 "$ROOT/LICENSE" "$package_dir/LICENSE"
+    install -m 0644 "$ROOT/NOTICE" "$package_dir/NOTICE"
+    install -m 0644 "$ROOT/SECURITY.md" "$package_dir/SECURITY.md"
+    install -m 0644 "$ROOT/THREAT_MODEL.md" "$package_dir/THREAT_MODEL.md"
+    cp -R "$THIRD_PARTY_DIR" "$package_dir/THIRD_PARTY_LICENSES"
+    install -m 0600 "$ROOT/proxy.install.json" "$package_dir/proxy.install.json"
+    install -m 0755 "$package_dir/zhp2pproxy.exe" "$TMP_DIR/$package.exe"
+    (
+      cd "$TMP_DIR"
+      zip -q -r "$package.zip" "$package"
+    )
+  done
+fi
 
 tar --create --gzip --file "$TMP_DIR/THIRD_PARTY_LICENSES.tar.gz" \
   --directory "$TMP_DIR" THIRD_PARTY_LICENSES
@@ -190,20 +199,27 @@ for release_document in README.md LICENSE NOTICE SECURITY.md THREAT_MODEL.md CON
   install -m 0644 "$ROOT/$release_document" "$TMP_DIR/$release_document"
 done
 
+release_files=(
+  zhp2pproxy-linux-amd64.bin
+  zhp2pproxy-linux-arm64.bin
+  zhp2pproxy-linux-amd64.tar.gz
+  zhp2pproxy-linux-arm64.tar.gz
+  THIRD_PARTY_LICENSES.tar.gz
+  SOURCE_COMMIT SBOM-go-modules.json README.md LICENSE NOTICE SECURITY.md
+  THREAT_MODEL.md CONTRIBUTING.md install.sh
+)
+if [[ "$RELEASE_WINDOWS" == "1" ]]; then
+  release_files+=(
+    zhp2pproxy-windows-amd64.exe
+    zhp2pproxy-windows-arm64.exe
+    zhp2pproxy-windows-amd64.zip
+    zhp2pproxy-windows-arm64.zip
+    install.ps1
+  )
+fi
 (
   cd "$TMP_DIR"
-  sha256sum \
-    zhp2pproxy-linux-amd64.bin \
-    zhp2pproxy-linux-arm64.bin \
-    zhp2pproxy-linux-amd64.tar.gz \
-    zhp2pproxy-linux-arm64.tar.gz \
-    zhp2pproxy-windows-amd64.exe \
-    zhp2pproxy-windows-arm64.exe \
-    zhp2pproxy-windows-amd64.zip \
-    zhp2pproxy-windows-arm64.zip \
-    THIRD_PARTY_LICENSES.tar.gz \
-    SOURCE_COMMIT SBOM-go-modules.json README.md LICENSE NOTICE SECURITY.md \
-    THREAT_MODEL.md CONTRIBUTING.md install.sh install.ps1 >SHA256SUMS
+  sha256sum "${release_files[@]}" >SHA256SUMS
 )
 
 if [[ -n "$UPDATE_SIGNING_KEY" ]]; then
@@ -220,15 +236,23 @@ if [[ -n "$UPDATE_SIGNING_KEY" ]]; then
   }
   linux_amd64_sha="$(awk '$2 == "zhp2pproxy-linux-amd64.bin" {print $1}' "$TMP_DIR/SHA256SUMS")"
   linux_arm64_sha="$(awk '$2 == "zhp2pproxy-linux-arm64.bin" {print $1}' "$TMP_DIR/SHA256SUMS")"
-  windows_amd64_sha="$(awk '$2 == "zhp2pproxy-windows-amd64.exe" {print $1}' "$TMP_DIR/SHA256SUMS")"
-  windows_arm64_sha="$(awk '$2 == "zhp2pproxy-windows-arm64.exe" {print $1}' "$TMP_DIR/SHA256SUMS")"
-  printf '{"version":"%s","sequence":%s,"published_at":"%s","downloads":{"linux-amd64":{"url":"%s/zhp2pproxy-linux-amd64.bin","sha256":"%s"},"linux-arm64":{"url":"%s/zhp2pproxy-linux-arm64.bin","sha256":"%s"},"windows-amd64":{"url":"%s/zhp2pproxy-windows-amd64.exe","sha256":"%s"},"windows-arm64":{"url":"%s/zhp2pproxy-windows-arm64.exe","sha256":"%s"}}}\n' \
-    "$VERSION" "$BUILD_SEQUENCE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    "$RELEASE_ASSET_BASE" "$linux_amd64_sha" \
-    "$RELEASE_ASSET_BASE" "$linux_arm64_sha" \
-    "$RELEASE_ASSET_BASE" "$windows_amd64_sha" \
-    "$RELEASE_ASSET_BASE" "$windows_arm64_sha" \
-    >"$TMP_DIR/update.json"
+  if [[ "$RELEASE_WINDOWS" == "1" ]]; then
+    windows_amd64_sha="$(awk '$2 == "zhp2pproxy-windows-amd64.exe" {print $1}' "$TMP_DIR/SHA256SUMS")"
+    windows_arm64_sha="$(awk '$2 == "zhp2pproxy-windows-arm64.exe" {print $1}' "$TMP_DIR/SHA256SUMS")"
+    printf '{"version":"%s","sequence":%s,"published_at":"%s","downloads":{"linux-amd64":{"url":"%s/zhp2pproxy-linux-amd64.bin","sha256":"%s"},"linux-arm64":{"url":"%s/zhp2pproxy-linux-arm64.bin","sha256":"%s"},"windows-amd64":{"url":"%s/zhp2pproxy-windows-amd64.exe","sha256":"%s"},"windows-arm64":{"url":"%s/zhp2pproxy-windows-arm64.exe","sha256":"%s"}}}\n' \
+      "$VERSION" "$BUILD_SEQUENCE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      "$RELEASE_ASSET_BASE" "$linux_amd64_sha" \
+      "$RELEASE_ASSET_BASE" "$linux_arm64_sha" \
+      "$RELEASE_ASSET_BASE" "$windows_amd64_sha" \
+      "$RELEASE_ASSET_BASE" "$windows_arm64_sha" \
+      >"$TMP_DIR/update.json"
+  else
+    printf '{"version":"%s","sequence":%s,"published_at":"%s","downloads":{"linux-amd64":{"url":"%s/zhp2pproxy-linux-amd64.bin","sha256":"%s"},"linux-arm64":{"url":"%s/zhp2pproxy-linux-arm64.bin","sha256":"%s"}}}\n' \
+      "$VERSION" "$BUILD_SEQUENCE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      "$RELEASE_ASSET_BASE" "$linux_amd64_sha" \
+      "$RELEASE_ASSET_BASE" "$linux_arm64_sha" \
+      >"$TMP_DIR/update.json"
+  fi
   openssl pkeyutl -sign -rawin -inkey "$UPDATE_SIGNING_KEY" \
     -in "$TMP_DIR/update.json" -out "$TMP_DIR/update.json.sig.raw"
   base64 -w0 "$TMP_DIR/update.json.sig.raw" >"$TMP_DIR/update.json.sig"
@@ -242,18 +266,7 @@ elif [[ -n "$PUBLISH_DIR" ]]; then
   exit 1
 fi
 
-for file in \
-  zhp2pproxy-linux-amd64.bin \
-  zhp2pproxy-linux-arm64.bin \
-  zhp2pproxy-linux-amd64.tar.gz \
-  zhp2pproxy-linux-arm64.tar.gz \
-  zhp2pproxy-windows-amd64.exe \
-  zhp2pproxy-windows-arm64.exe \
-  zhp2pproxy-windows-amd64.zip \
-  zhp2pproxy-windows-arm64.zip \
-  THIRD_PARTY_LICENSES.tar.gz \
-  SHA256SUMS SOURCE_COMMIT SBOM-go-modules.json README.md LICENSE NOTICE \
-  SECURITY.md THREAT_MODEL.md CONTRIBUTING.md install.sh install.ps1; do
+for file in "${release_files[@]}" SHA256SUMS; do
   install -m 0644 "$TMP_DIR/$file" "$DIST_DIR/$file"
 done
 if [[ -f "$TMP_DIR/update.json" ]]; then
@@ -265,18 +278,7 @@ chmod 0755 "$DIST_DIR/install.sh"
 
 if [[ -n "$PUBLISH_DIR" ]]; then
   install -d -m 0755 "$PUBLISH_DIR"
-  for file in \
-    zhp2pproxy-linux-amd64.bin \
-    zhp2pproxy-linux-arm64.bin \
-    zhp2pproxy-linux-amd64.tar.gz \
-    zhp2pproxy-linux-arm64.tar.gz \
-    zhp2pproxy-windows-amd64.exe \
-    zhp2pproxy-windows-arm64.exe \
-    zhp2pproxy-windows-amd64.zip \
-    zhp2pproxy-windows-arm64.zip \
-    THIRD_PARTY_LICENSES.tar.gz \
-    SHA256SUMS SHA256SUMS.sig SOURCE_COMMIT SBOM-go-modules.json \
-    README.md LICENSE NOTICE SECURITY.md THREAT_MODEL.md CONTRIBUTING.md install.ps1; do
+  for file in "${release_files[@]}" SHA256SUMS SHA256SUMS.sig; do
     install -m 0644 "$DIST_DIR/$file" "$PUBLISH_DIR/$file"
   done
   install -m 0644 "$DIST_DIR/update.json" "$PUBLISH_DIR/update.json"

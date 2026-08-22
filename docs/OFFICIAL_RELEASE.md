@@ -27,8 +27,8 @@ The release command requires:
 
 - a clean worktree at an exact Git tag;
 - `UPDATE_SIGNING_KEY` pointing to the offline Ed25519 private key;
-- `WINDOWS_SIGN_COMMAND` signing one EXE path with Authenticode;
-- `WINDOWS_VERIFY_COMMAND` independently validating one signed EXE path;
+- for a Windows release, `WINDOWS_SIGN_COMMAND` signing one EXE path with
+  Authenticode and `WINDOWS_VERIFY_COMMAND` independently validating it;
 - `PUBLISH_DIR` set to a staging directory, never directly to a live web root.
 
 Update URLs are fixed to GitHub Releases under
@@ -44,6 +44,20 @@ WINDOWS_VERIFY_COMMAND=/secure/bin/verify-windows-signature \
 PUBLISH_DIR=/secure/release-staging/vX.Y.Z \
 ./release.sh
 ```
+
+When a trusted Authenticode certificate is unavailable, publish a complete
+Linux-only release instead of unsigned Windows binaries:
+
+```bash
+UPDATE_SIGNING_KEY=/secure/offline/update-ed25519.pem \
+RELEASE_WINDOWS=0 \
+PUBLISH_DIR=/secure/release-staging/vX.Y.Z \
+./release.sh
+```
+
+This mode omits Windows artifacts, `install.ps1` and Windows entries in the
+signed update manifest. `RELEASE_WINDOWS=1` remains the default and refuses a
+public staging build unless both Windows signing commands are configured.
 
 Review `SHA256SUMS`, verify `SHA256SUMS.sig` with
 `release/update-public.pem`, inspect `SOURCE_COMMIT` and the SBOM, then copy the
