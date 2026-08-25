@@ -43,6 +43,7 @@ var allowedMethods = map[string]struct{}{
 	"waitforlogs":           {},
 	"gettransactionreceipt": {},
 	"scantxoutset":          {},
+	"multichain_rpc":        {},
 }
 
 var p2pFirstMethods = map[string]struct{}{
@@ -121,6 +122,7 @@ var p2pAllowedMethods = map[string]struct{}{
 	"searchlogs":            {},
 	"gettransactionreceipt": {},
 	"scantxoutset":          {},
+	"multichain_rpc":        {},
 }
 
 // p2pConsensusMethods return deterministic, security-sensitive chain data.

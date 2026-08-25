@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"regexp"
 
+	"github.com/zerohourcash/zhp2pproxy/internal/multichain"
 	"github.com/zerohourcash/zhp2pproxy/pkg/jsonrpc"
 )
 
@@ -18,6 +19,9 @@ var (
 func P2PRequestAllowed(req jsonrpc.Request) bool {
 	if !P2PMethodAllowed(req.Method) {
 		return false
+	}
+	if req.Method == "multichain_rpc" {
+		return multichain.RequestAllowed(req)
 	}
 	if req.Method != "scantxoutset" {
 		return true

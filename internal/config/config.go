@@ -26,62 +26,74 @@ var runtimeGOOS = runtime.GOOS
 var getenv = os.Getenv
 
 type Config struct {
-	Listen                  string   `json:"listen"`
-	P2PPort                 int      `json:"p2p_port"`
-	BrowserWebTransport     bool     `json:"browser_webtransport_enabled"`
-	BrowserWebTransportPort int      `json:"browser_webtransport_port"`
-	BrowserWebRTC           bool     `json:"browser_webrtc_enabled"`
-	BrowserWebRTCPort       int      `json:"browser_webrtc_port"`
-	PublicEndpoint          string   `json:"public_endpoint"`
-	RPCURL                  string   `json:"rpc_url"`
-	RPCHost                 string   `json:"rpc_host"`
-	RPCPort                 int      `json:"rpc_port"`
-	RPCUser                 string   `json:"rpc_user"`
-	RPCPass                 string   `json:"rpc_pass"`
-	RPCCookiePath           string   `json:"rpc_cookie_path"`
-	NodeConfigPath          string   `json:"node_config_path"`
-	BootstrapPeers          []string `json:"bootstrap_peers"`
-	BootstrapURLs           []string `json:"bootstrap_urls"`
-	RateLimit               float64  `json:"rate_limit"`
-	RateBurst               int      `json:"rate_burst"`
-	APIToken                string   `json:"api_token"`
-	AdminToken              string   `json:"admin_token"`
-	AllowedIPs              []string `json:"allowed_ips"`
-	TrustedProxies          []string `json:"trusted_proxies"`
-	CORSAllowedOrigins      []string `json:"cors_allowed_origins"`
-	ExposePeerInfo          bool     `json:"expose_peer_info"`
-	P2PLoadBalance          bool     `json:"p2p_load_balance"`
-	PeerStorePath           string   `json:"peer_store_path"`
-	IdentityKeyPath         string   `json:"identity_key_path"`
-	OverlayNetworkID        string   `json:"overlay_network_id"`
-	OverlayPrivate          bool     `json:"overlay_private"`
-	OverlayPSK              string   `json:"overlay_psk"`
-	OverlayMode             string   `json:"overlay_mode"`
-	ForceRelay              bool     `json:"force_relay"`
-	RelayEnabled            bool     `json:"relay_enabled"`
-	EnableIPv6              bool     `json:"enable_ipv6"`
-	EnableQUIC              bool     `json:"enable_quic"`
-	EnableNATPortMap        bool     `json:"enable_nat_port_map"`
-	EnableHolePunching      bool     `json:"enable_hole_punching"`
-	NodeP2PHost             string   `json:"node_p2p_host"`
-	NodeP2PPort             int      `json:"node_p2p_port"`
-	P2PProxyListen          string   `json:"p2p_proxy_listen"`
-	NativeP2PProxy          bool     `json:"native_p2p_proxy"`
-	MaxBodyBytes            int64    `json:"max_body_bytes"`
-	P2PRPCRateLimit         float64  `json:"p2p_rpc_rate_limit"`
-	P2PRPCBurst             int      `json:"p2p_rpc_burst"`
-	P2PRPCMaxConcurrent     int      `json:"p2p_rpc_max_concurrent"`
-	P2PRPCResponseBytes     int64    `json:"p2p_rpc_response_bytes"`
-	P2PRPCQuorum            int      `json:"p2p_rpc_quorum"`
-	P2PMaxTunnels           int      `json:"p2p_max_tunnels"`
-	P2PMaxTunnelsPerPeer    int      `json:"p2p_max_tunnels_per_peer"`
-	P2PMaxBytesPerSecond    int64    `json:"p2p_max_bytes_per_second"`
-	P2PHandshakeTimeout     int      `json:"p2p_handshake_timeout_seconds"`
-	NodeP2PMagic            string   `json:"node_p2p_magic"`
-	LocalRPCPreferDirect    bool     `json:"local_rpc_prefer_direct"`
-	AutoUpdateEnabled       bool     `json:"auto_update_enabled"`
-	UpdateManifestURL       string   `json:"update_manifest_url"`
-	UpdateCheckInterval     int      `json:"update_check_interval_seconds"`
+	Listen                    string           `json:"listen"`
+	P2PPort                   int              `json:"p2p_port"`
+	BrowserWebTransport       bool             `json:"browser_webtransport_enabled"`
+	BrowserWebTransportPort   int              `json:"browser_webtransport_port"`
+	BrowserWebRTC             bool             `json:"browser_webrtc_enabled"`
+	BrowserWebRTCPort         int              `json:"browser_webrtc_port"`
+	PublicEndpoint            string           `json:"public_endpoint"`
+	RPCURL                    string           `json:"rpc_url"`
+	RPCHost                   string           `json:"rpc_host"`
+	RPCPort                   int              `json:"rpc_port"`
+	RPCUser                   string           `json:"rpc_user"`
+	RPCPass                   string           `json:"rpc_pass"`
+	RPCCookiePath             string           `json:"rpc_cookie_path"`
+	NodeConfigPath            string           `json:"node_config_path"`
+	BootstrapPeers            []string         `json:"bootstrap_peers"`
+	BootstrapURLs             []string         `json:"bootstrap_urls"`
+	RateLimit                 float64          `json:"rate_limit"`
+	RateBurst                 int              `json:"rate_burst"`
+	APIToken                  string           `json:"api_token"`
+	AdminToken                string           `json:"admin_token"`
+	AllowedIPs                []string         `json:"allowed_ips"`
+	TrustedProxies            []string         `json:"trusted_proxies"`
+	CORSAllowedOrigins        []string         `json:"cors_allowed_origins"`
+	ExposePeerInfo            bool             `json:"expose_peer_info"`
+	P2PLoadBalance            bool             `json:"p2p_load_balance"`
+	PeerStorePath             string           `json:"peer_store_path"`
+	IdentityKeyPath           string           `json:"identity_key_path"`
+	OverlayNetworkID          string           `json:"overlay_network_id"`
+	OverlayPrivate            bool             `json:"overlay_private"`
+	OverlayPSK                string           `json:"overlay_psk"`
+	OverlayMode               string           `json:"overlay_mode"`
+	ForceRelay                bool             `json:"force_relay"`
+	RelayEnabled              bool             `json:"relay_enabled"`
+	EnableIPv6                bool             `json:"enable_ipv6"`
+	EnableQUIC                bool             `json:"enable_quic"`
+	EnableNATPortMap          bool             `json:"enable_nat_port_map"`
+	EnableHolePunching        bool             `json:"enable_hole_punching"`
+	NodeP2PHost               string           `json:"node_p2p_host"`
+	NodeP2PPort               int              `json:"node_p2p_port"`
+	P2PProxyListen            string           `json:"p2p_proxy_listen"`
+	NativeP2PProxy            bool             `json:"native_p2p_proxy"`
+	MaxBodyBytes              int64            `json:"max_body_bytes"`
+	P2PRPCRateLimit           float64          `json:"p2p_rpc_rate_limit"`
+	P2PRPCBurst               int              `json:"p2p_rpc_burst"`
+	P2PRPCMaxConcurrent       int              `json:"p2p_rpc_max_concurrent"`
+	P2PRPCResponseBytes       int64            `json:"p2p_rpc_response_bytes"`
+	P2PRPCQuorum              int              `json:"p2p_rpc_quorum"`
+	P2PMaxTunnels             int              `json:"p2p_max_tunnels"`
+	P2PMaxTunnelsPerPeer      int              `json:"p2p_max_tunnels_per_peer"`
+	P2PMaxBytesPerSecond      int64            `json:"p2p_max_bytes_per_second"`
+	P2PHandshakeTimeout       int              `json:"p2p_handshake_timeout_seconds"`
+	NodeP2PMagic              string           `json:"node_p2p_magic"`
+	LocalRPCPreferDirect      bool             `json:"local_rpc_prefer_direct"`
+	AutoUpdateEnabled         bool             `json:"auto_update_enabled"`
+	UpdateManifestURL         string           `json:"update_manifest_url"`
+	UpdateCheckInterval       int              `json:"update_check_interval_seconds"`
+	MultichainRPC             []ChainRPCConfig `json:"multichain_rpc"`
+	MultichainCatalogDisabled bool             `json:"multichain_catalog_disabled"`
+	MultichainCatalogURL      string           `json:"multichain_catalog_url"`
+	MultichainCatalogCache    string           `json:"multichain_catalog_cache_path"`
+	MultichainCatalogRefresh  int              `json:"multichain_catalog_refresh_seconds"`
+}
+
+type ChainRPCConfig struct {
+	ID      string   `json:"id"`
+	Kind    string   `json:"kind"`
+	RPCURLs []string `json:"rpc_urls"`
+	Enabled bool     `json:"enabled"`
 }
 
 func Default() Config {
@@ -109,38 +121,52 @@ func Default() Config {
 			"http://localhost:5173",
 			"http://127.0.0.1:5173",
 		},
-		ExposePeerInfo:       false,
-		P2PLoadBalance:       true,
-		PeerStorePath:        "peers.json",
-		IdentityKeyPath:      "identity.key",
-		OverlayNetworkID:     "zhcash-proxy-main",
-		OverlayPrivate:       true,
-		OverlayMode:          "relay-first",
-		ForceRelay:           true,
-		RelayEnabled:         true,
-		EnableIPv6:           true,
-		EnableQUIC:           true,
-		EnableNATPortMap:     false,
-		EnableHolePunching:   false,
-		NodeP2PHost:          "127.0.0.1",
-		NodeP2PPort:          38100,
-		P2PProxyListen:       "127.0.0.1:3890",
-		NativeP2PProxy:       true,
-		MaxBodyBytes:         1 << 20,
-		P2PRPCRateLimit:      5,
-		P2PRPCBurst:          10,
-		P2PRPCMaxConcurrent:  8,
-		P2PRPCResponseBytes:  16 << 20,
-		P2PRPCQuorum:         2,
-		P2PMaxTunnels:        64,
-		P2PMaxTunnelsPerPeer: 4,
-		P2PMaxBytesPerSecond: 8 << 20,
-		P2PHandshakeTimeout:  10,
-		NodeP2PMagic:         "f1cfa6d3",
-		LocalRPCPreferDirect: false,
-		AutoUpdateEnabled:    true,
-		UpdateManifestURL:    OfficialUpdateManifestURL,
-		UpdateCheckInterval:  300,
+		ExposePeerInfo:           false,
+		P2PLoadBalance:           true,
+		PeerStorePath:            "peers.json",
+		IdentityKeyPath:          "identity.key",
+		OverlayNetworkID:         "zhcash-proxy-main",
+		OverlayPrivate:           true,
+		OverlayMode:              "relay-first",
+		ForceRelay:               true,
+		RelayEnabled:             true,
+		EnableIPv6:               true,
+		EnableQUIC:               true,
+		EnableNATPortMap:         false,
+		EnableHolePunching:       false,
+		NodeP2PHost:              "127.0.0.1",
+		NodeP2PPort:              38100,
+		P2PProxyListen:           "127.0.0.1:3890",
+		NativeP2PProxy:           true,
+		MaxBodyBytes:             1 << 20,
+		P2PRPCRateLimit:          5,
+		P2PRPCBurst:              10,
+		P2PRPCMaxConcurrent:      8,
+		P2PRPCResponseBytes:      16 << 20,
+		P2PRPCQuorum:             2,
+		P2PMaxTunnels:            64,
+		P2PMaxTunnelsPerPeer:     4,
+		P2PMaxBytesPerSecond:     8 << 20,
+		P2PHandshakeTimeout:      10,
+		NodeP2PMagic:             "f1cfa6d3",
+		LocalRPCPreferDirect:     false,
+		AutoUpdateEnabled:        true,
+		UpdateManifestURL:        OfficialUpdateManifestURL,
+		UpdateCheckInterval:      300,
+		MultichainCatalogURL:     "https://zeroscan.st/.well-known/zhp2pproxy/chains.json",
+		MultichainCatalogCache:   "chains.catalog.json",
+		MultichainCatalogRefresh: 900,
+		MultichainRPC: []ChainRPCConfig{
+			{ID: "ethereum-mainnet", Kind: "evm", RPCURLs: []string{"https://ethereum-rpc.publicnode.com", "https://eth.llamarpc.com"}, Enabled: true},
+			{ID: "ethereum-sepolia", Kind: "evm", RPCURLs: []string{"https://ethereum-sepolia-rpc.publicnode.com", "https://rpc.sepolia.org"}, Enabled: true},
+			{ID: "polygon-mainnet", Kind: "evm", RPCURLs: []string{"https://polygon-bor-rpc.publicnode.com", "https://polygon.drpc.org"}, Enabled: true},
+			{ID: "bsc-mainnet", Kind: "evm", RPCURLs: []string{"https://bsc-rpc.publicnode.com", "https://bsc-dataseed.bnbchain.org"}, Enabled: true},
+			{ID: "bsc-testnet", Kind: "evm", RPCURLs: []string{"https://bsc-testnet-rpc.publicnode.com", "https://bsc-testnet-dataseed.bnbchain.org"}, Enabled: true},
+			{ID: "opbnb-mainnet", Kind: "evm", RPCURLs: []string{"https://opbnb-rpc.publicnode.com", "https://opbnb-mainnet-rpc.bnbchain.org"}, Enabled: true},
+			{ID: "opbnb-testnet", Kind: "evm", RPCURLs: []string{"https://opbnb-testnet-rpc.publicnode.com", "https://opbnb-testnet-rpc.bnbchain.org"}, Enabled: true},
+			{ID: "solana-mainnet", Kind: "solana", RPCURLs: []string{"https://solana-rpc.publicnode.com", "https://api.mainnet-beta.solana.com"}, Enabled: true},
+			{ID: "solana-devnet", Kind: "solana", RPCURLs: []string{"https://api.devnet.solana.com"}, Enabled: true},
+		},
 	}
 }
 
@@ -174,6 +200,9 @@ func Load(path string) (Config, bool, error) {
 	}
 	configuredUpdateManifestURL := cfg.UpdateManifestURL
 	applyDefaults(&cfg)
+	if err := validateBrowserTransports(cfg); err != nil {
+		return cfg, created, err
+	}
 	if err := validateHTTPExposure(cfg); err != nil {
 		return cfg, created, err
 	}
@@ -206,6 +235,44 @@ func Load(path string) (Config, bool, error) {
 		}
 	}
 	return cfg, created, nil
+}
+
+func validateBrowserTransports(cfg Config) error {
+	resolvePort := func(enabled bool, configured, offset int, name string) (int, error) {
+		if !enabled {
+			return 0, nil
+		}
+		port := configured
+		if port <= 0 && cfg.P2PPort > 0 {
+			port = cfg.P2PPort + offset
+		}
+		if port < 1 || port > 65535 {
+			return 0, fmt.Errorf("%s must resolve to a port between 1 and 65535", name)
+		}
+		return port, nil
+	}
+	webTransportPort, err := resolvePort(
+		cfg.BrowserWebTransport,
+		cfg.BrowserWebTransportPort,
+		2,
+		"browser_webtransport_port",
+	)
+	if err != nil {
+		return err
+	}
+	webRTCPort, err := resolvePort(
+		cfg.BrowserWebRTC,
+		cfg.BrowserWebRTCPort,
+		3,
+		"browser_webrtc_port",
+	)
+	if err != nil {
+		return err
+	}
+	if webTransportPort > 0 && webTransportPort == webRTCPort {
+		return errors.New("browser WebTransport and WebRTC Direct require different UDP ports")
+	}
+	return nil
 }
 
 func validateHTTPExposure(cfg Config) error {
@@ -285,6 +352,7 @@ func normalizeRelativePaths(cfg *Config, baseDir string) {
 	cfg.IdentityKeyPath = absFromBase(baseDir, cfg.IdentityKeyPath)
 	cfg.NodeConfigPath = absFromBase(baseDir, cfg.NodeConfigPath)
 	cfg.RPCCookiePath = absFromBase(baseDir, cfg.RPCCookiePath)
+	cfg.MultichainCatalogCache = absFromBase(baseDir, cfg.MultichainCatalogCache)
 }
 
 func absFromBase(baseDir, path string) string {
@@ -379,6 +447,18 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.UpdateCheckInterval < 300 {
 		cfg.UpdateCheckInterval = def.UpdateCheckInterval
+	}
+	if cfg.MultichainRPC == nil {
+		cfg.MultichainRPC = def.MultichainRPC
+	}
+	if cfg.MultichainCatalogURL == "" {
+		cfg.MultichainCatalogURL = def.MultichainCatalogURL
+	}
+	if cfg.MultichainCatalogCache == "" {
+		cfg.MultichainCatalogCache = def.MultichainCatalogCache
+	}
+	if cfg.MultichainCatalogRefresh < 300 {
+		cfg.MultichainCatalogRefresh = def.MultichainCatalogRefresh
 	}
 }
 

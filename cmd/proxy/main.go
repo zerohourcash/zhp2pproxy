@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
+	"github.com/zerohourcash/zhp2pproxy/internal/chaincatalog"
 	"github.com/zerohourcash/zhp2pproxy/internal/config"
+	"github.com/zerohourcash/zhp2pproxy/internal/multichain"
 	"github.com/zerohourcash/zhp2pproxy/internal/node"
 	"github.com/zerohourcash/zhp2pproxy/internal/p2p"
 	"github.com/zerohourcash/zhp2pproxy/internal/proxy"
@@ -91,7 +94,25 @@ func runProxy(parent context.Context, configPath string) error {
 	}
 	pingCancel()
 
-	p2pSvc, err := p2p.New(ctx, cfg, local)
+	chains, err := multichain.New(cfg.MultichainRPC, log.Printf)
+	if err != nil {
+		return fmt.Errorf("[multichain] %w", err)
+	}
+	catalogSequence := int64(0)
+	if !cfg.MultichainCatalogDisabled {
+		cached, cacheErr := chaincatalog.LoadCached(chainCatalogOptions(cfg))
+		if cacheErr == nil {
+			if err := chains.Add(cached.Chains); err != nil {
+				log.Printf("[catalog] ignored invalid cached catalog: %v", err)
+			} else {
+				catalogSequence = cached.Sequence
+				log.Printf("[catalog] loaded signed offline cache sequence=%d chains=%d", cached.Sequence, len(cached.Chains))
+			}
+		} else if !os.IsNotExist(cacheErr) {
+			log.Printf("[catalog] cached catalog unavailable: %v", cacheErr)
+		}
+	}
+	p2pSvc, err := p2p.New(ctx, cfg, local, chains)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil
@@ -108,6 +129,7 @@ func runProxy(parent context.Context, configPath string) error {
 
 	metrics := &proxy.Metrics{}
 	handler := proxy.NewHandler(cfg, local, p2pSvc, metrics)
+	handler.SetMultichain(chains)
 	httpServer := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           server.New(cfg, handler, metrics),
@@ -128,6 +150,18 @@ func runProxy(parent context.Context, configPath string) error {
 		serveErr <- nil
 	}()
 	go monitorLocalNode(ctx, resolvedConfigPath, cfg, local, initialPingErr)
+	go monitorMultichain(ctx, chains)
+	if !cfg.MultichainCatalogDisabled {
+		go chaincatalog.Monitor(ctx, chainCatalogOptions(cfg), catalogSequence, func(catalog chaincatalog.Catalog) error {
+			if err := chains.Add(catalog.Chains); err != nil {
+				return err
+			}
+			go chains.ProbeAll(ctx)
+			return nil
+		})
+	} else {
+		log.Printf("[catalog] signed ZeroScan chain catalog disabled; autonomous local configuration remains active")
+	}
 	updateApplied := startUpdateMonitor(ctx, cfg)
 
 	select {
@@ -153,6 +187,31 @@ func runProxy(parent context.Context, configPath string) error {
 	default:
 	}
 	return nil
+}
+
+func monitorMultichain(ctx context.Context, chains *multichain.Client) {
+	chains.ProbeAll(ctx)
+	log.Printf("[multichain] initial background probe complete chains=%d", len(chains.Status()))
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			chains.ProbeAll(ctx)
+		}
+	}
+}
+
+func chainCatalogOptions(cfg config.Config) chaincatalog.Options {
+	return chaincatalog.Options{
+		URL:             cfg.MultichainCatalogURL,
+		CachePath:       cfg.MultichainCatalogCache,
+		PublicKeyBase64: updatePublicKey,
+		Refresh:         time.Duration(cfg.MultichainCatalogRefresh) * time.Second,
+		Logf:            log.Printf,
+	}
 }
 
 func startUpdateMonitor(ctx context.Context, cfg config.Config) <-chan updater.Result {

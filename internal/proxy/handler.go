@@ -17,6 +17,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/zerohourcash/zhp2pproxy/internal/config"
+	"github.com/zerohourcash/zhp2pproxy/internal/multichain"
 	"github.com/zerohourcash/zhp2pproxy/internal/node"
 	"github.com/zerohourcash/zhp2pproxy/internal/rpcaudit"
 	"github.com/zerohourcash/zhp2pproxy/pkg/jsonrpc"
@@ -56,6 +57,11 @@ type Handler struct {
 	local   *node.Client
 	p2p     P2PRPC
 	metrics *Metrics
+	chains  *multichain.Client
+}
+
+func (h *Handler) SetMultichain(chains *multichain.Client) {
+	h.chains = chains
 }
 
 func NewHandler(cfg config.Config, local *node.Client, p2p P2PRPC, metrics *Metrics) *Handler {
@@ -193,6 +199,23 @@ func (h *Handler) handleOne(ctx context.Context, req jsonrpc.Request) jsonrpc.Re
 	if len(req.Params) == 0 {
 		req.Params = json.RawMessage("[]")
 	}
+	if req.Method == "multichain_rpc" {
+		if !multichain.RequestAllowed(req) {
+			inc(&h.metrics.MethodDenied)
+			return jsonrpc.ErrorResponse(req.ID, -32602, "invalid multichain request")
+		}
+		if h.chains != nil {
+			if result, rpcErr := h.chains.CallEnvelope(ctx, req); rpcErr == nil {
+				return jsonrpc.ResultResponse(req.ID, result)
+			}
+		}
+		if h.p2p != nil {
+			if result, err := h.callP2P(ctx, req); err == nil {
+				return jsonrpc.ResultResponse(req.ID, result)
+			}
+		}
+		return jsonrpc.ErrorResponse(req.ID, -32603, "multichain RPC and P2P fallback are unavailable")
+	}
 	if h.cfg.P2PLoadBalance && CanTryP2PFirst(req.Method) && h.p2p != nil && !h.cfg.LocalRPCPreferDirect {
 		if result, err := h.callP2P(ctx, req); err == nil {
 			return jsonrpc.ResultResponse(req.ID, result)
@@ -237,11 +260,52 @@ func (h *Handler) Info(w http.ResponseWriter, r *http.Request) {
 	info := map[string]any{
 		"metrics": h.metrics.Snapshot(),
 		"p2p":     nil,
+		"management": map[string]any{
+			"enabled":          !h.cfg.MultichainCatalogDisabled,
+			"primary":          h.cfg.MultichainCatalogURL,
+			"signature_pinned": true,
+			"offline_capable":  true,
+		},
 	}
 	if h.p2p != nil {
 		info["p2p"] = h.p2p.Info()
 	}
+	if h.chains != nil {
+		info["chains"] = h.chains.Status()
+	}
 	writeJSON(w, info)
+}
+
+// ChainRPC exposes standard JSON-RPC at /chains/{configured-id}/rpc. Targets
+// come only from local/built-in or signed cached configuration; callers cannot
+// supply an upstream URL.
+func (h *Handler) ChainRPC(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !requireJSON(w, r) {
+		return
+	}
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) != 3 || parts[0] != "chains" || parts[2] != "rpc" {
+		http.Error(w, "invalid chain RPC path", http.StatusNotFound)
+		return
+	}
+	defer r.Body.Close()
+	var request jsonrpc.Request
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, h.cfg.MaxBodyBytes)).Decode(&request); err != nil {
+		writeJSON(w, jsonrpc.ErrorResponse(nil, -32700, err.Error()))
+		return
+	}
+	if len(request.Params) == 0 {
+		request.Params = json.RawMessage("[]")
+	}
+	envelopeParams, _ := json.Marshal([]multichain.Envelope{{Chain: parts[1], Method: request.Method, Params: request.Params}})
+	response := h.handleOne(rpcaudit.WithSource(r.Context(), "multichain-http"), jsonrpc.Request{
+		JSONRPC: "2.0", ID: request.ID, Method: "multichain_rpc", Params: envelopeParams,
+	})
+	writeJSON(w, response)
 }
 
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
@@ -280,8 +344,19 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 	}
 
 	p2pConnected := peerID != "" && connectedPeers > 0
+	chainStatus := []multichain.Status(nil)
+	chainConnected := false
+	if h.chains != nil {
+		chainStatus = h.chains.Status()
+		for _, status := range chainStatus {
+			if status.Connected {
+				chainConnected = true
+				break
+			}
+		}
+	}
 	writeJSON(w, map[string]any{
-		"ok": localConnected || p2pConnected,
+		"ok": localConnected || p2pConnected || chainConnected,
 		"local_node": map[string]any{
 			"connected":    localConnected,
 			"block_height": blockHeight,
@@ -300,6 +375,13 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 			}
 			return h.p2p.NodeP2PStatus()
 		}(),
+		"chains": chainStatus,
+		"management": map[string]any{
+			"enabled":          !h.cfg.MultichainCatalogDisabled,
+			"primary":          h.cfg.MultichainCatalogURL,
+			"signature_pinned": true,
+			"offline_capable":  true,
+		},
 	})
 }
 

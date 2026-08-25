@@ -92,6 +92,50 @@ WebRTC Direct. Browser RPC публикует только ограниченн�
 `testmempoolaccept` и `sendrawtransaction` уже подписанной транзакции. Если
 локальной ZHCASH-ноды нет, proxy пересылает запрос через приватный overlay к
 peer с рабочей RPC-нодой; admin/node-control методы браузеру не открываются.
+Параметры `browser_webtransport_enabled` и `browser_webrtc_enabled` включены в
+установочном конфиге явно; их UDP-порты валидируются и не могут совпадать.
+`/info` и `/admin/status` возвращают `browser_rpc_protocol` и готовые
+`browser_addrs` с `certhash`. Для подключения новых публичных proxy эти адреса
+и, при наличии TLS-домена, `wss://.../zhp2p/rpc` публикуются в каталоге PWA
+`zhp2pproxy-browser.json`; кошелёк отбрасывает `ws://` и multiaddr без
+закреплённого сертификата.
+
+## Другие блокчейны и автономное управление
+
+Proxy поддерживает Ethereum, Polygon, BNB Chain, opBNB и Solana, включая
+указанные в `proxy.json` тестовые сети. Через HTTP запрос отправляется на
+`POST /chains/<chain-id>/rpc`; через WSS, WebRTC Direct, WebTransport или
+private overlay используется метод `multichain_rpc` с одним envelope:
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"multichain_rpc","params":[{"chain":"bsc-mainnet","method":"eth_getBalance","params":["0x...","latest"]}]}
+```
+
+Разрешены только безопасные методы чтения, dry run/simulation и отправка уже
+подписанной транзакции. Приватные ключи, подпись и unlock-методы через proxy не
+проходят. Текущая доступность каждой сети, выбранный публичный host и задержка
+видны в `/info` и `/health`; URL с credentials в конфиге запрещены.
+
+Система не зависит от ZeroScan для запуска. Сначала всегда доступны встроенные
+RPC и настройки владельца из `proxy.json`, затем — последний проверенный кэш.
+`zeroscan.st` является главным центром управления каталогом: раз в 15 минут
+proxy запрашивает `/.well-known/zhp2pproxy/chains.json` и его `.sig`. Каталог
+применяется только после Ed25519-проверки встроенным public key и только при
+росте монотонного `sequence`; он может добавить публичные credential-free HTTPS
+RPC, но не заменить локальные настройки и не направить запрос на loopback или
+private IP. При недоступности сервера proxy продолжает работу без задержки на
+последней конфигурации. Управление можно полностью отключить:
+
+```json
+{
+  "multichain_catalog_disabled": true
+}
+```
+
+Адрес, путь к кэшу и интервал задаются параметрами
+`multichain_catalog_url`, `multichain_catalog_cache_path` и
+`multichain_catalog_refresh_seconds` (минимум 300 секунд). Любой изменённый
+сервер всё равно должен публиковать каталог с действующей официальной подписью.
 
 ## RPC-журнал и нагрузка
 

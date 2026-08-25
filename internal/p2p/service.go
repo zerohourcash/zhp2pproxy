@@ -33,6 +33,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/zerohourcash/zhp2pproxy/internal/config"
+	"github.com/zerohourcash/zhp2pproxy/internal/multichain"
 	"github.com/zerohourcash/zhp2pproxy/internal/node"
 	"github.com/zerohourcash/zhp2pproxy/internal/proxy"
 	"github.com/zerohourcash/zhp2pproxy/internal/rpcaudit"
@@ -58,6 +59,7 @@ type Service struct {
 	pubsub      *pubsub.PubSub
 	topic       *pubsub.Topic
 	local       *node.Client
+	chains      *multichain.Client
 	overlay     overlaySpec
 	tcpLn       net.Listener
 	rpcPeerMu   sync.Mutex
@@ -218,8 +220,12 @@ func (s *Service) NodeP2PStatus() any {
 	return status
 }
 
-func New(parent context.Context, cfg config.Config, local *node.Client) (_ *Service, returnErr error) {
+func New(parent context.Context, cfg config.Config, local *node.Client, optionalChains ...*multichain.Client) (_ *Service, returnErr error) {
 	ctx, cancel := context.WithCancel(parent)
+	var chains *multichain.Client
+	if len(optionalChains) > 0 {
+		chains = optionalChains[0]
+	}
 	defer func() {
 		if returnErr != nil {
 			cancel()
@@ -294,7 +300,7 @@ func New(parent context.Context, cfg config.Config, local *node.Client) (_ *Serv
 		return nil, err
 	}
 	s := &Service{
-		cfg: cfg, host: h, pubsub: ps, topic: topic, local: local, overlay: overlay,
+		cfg: cfg, host: h, pubsub: ps, topic: topic, local: local, chains: chains, overlay: overlay,
 		stats: make(map[peer.ID]*peerStats), rpcLimits: make(map[peer.ID]*rate.Limiter),
 		rpcGlobal:  rate.NewLimiter(rate.Limit(cfg.P2PRPCRateLimit*float64(cfg.P2PRPCMaxConcurrent)), cfg.P2PRPCBurst*cfg.P2PRPCMaxConcurrent),
 		rpcSlots:   make(chan struct{}, cfg.P2PRPCMaxConcurrent),
@@ -808,7 +814,7 @@ func (s *Service) handleRPCStream(st network.Stream) {
 	ctx := rpcaudit.WithSource(context.Background(), "overlay-peer:"+remotePeer.String())
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	result, rpcErr := s.local.Call(ctx, req)
+	result, rpcErr := s.callLocalRPC(ctx, req)
 	if rpcErr != nil {
 		_ = json.NewEncoder(st).Encode(jsonrpc.ErrorResponse(req.ID, rpcErr.Code, rpcErr.Message))
 		return
@@ -863,7 +869,7 @@ func (s *Service) handleBrowserRPCStream(st network.Stream) {
 	}
 	localCtx := rpcaudit.WithSource(context.Background(), "browser-peer:"+remotePeer.String())
 	localCtx, localCancel := context.WithTimeout(localCtx, localTimeout)
-	result, rpcErr := s.local.Call(localCtx, req)
+	result, rpcErr := s.callLocalRPC(localCtx, req)
 	localCancel()
 	if rpcErr != nil {
 		// The browser edge remains useful when this gateway's own node is down:
@@ -882,6 +888,16 @@ func (s *Service) handleBrowserRPCStream(st network.Stream) {
 		return
 	}
 	_ = json.NewEncoder(st).Encode(jsonrpc.ResultResponse(req.ID, result))
+}
+
+func (s *Service) callLocalRPC(ctx context.Context, req jsonrpc.Request) (json.RawMessage, *jsonrpc.Error) {
+	if req.Method == "multichain_rpc" {
+		if s.chains == nil {
+			return nil, &jsonrpc.Error{Code: -32603, Message: "multichain RPC is unavailable"}
+		}
+		return s.chains.CallEnvelope(ctx, req)
+	}
+	return s.local.Call(ctx, req)
 }
 
 func rpcTimeoutForMethod(method string) time.Duration {
