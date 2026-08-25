@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"time"
 
@@ -130,6 +131,19 @@ func runProxy(parent context.Context, configPath string) error {
 	metrics := &proxy.Metrics{}
 	handler := proxy.NewHandler(cfg, local, p2pSvc, metrics)
 	handler.SetMultichain(chains)
+	updateSequence, sequenceErr := strconv.ParseInt(buildSequence, 10, 64)
+	updateEnabled := cfg.AutoUpdateEnabled && sequenceErr == nil && updateSequence > 0
+	updateStatus := updater.NewStatusStore(
+		updateEnabled,
+		version,
+		updateSequence,
+		cfg.UpdateManifestURL,
+		runtime.GOOS,
+	)
+	if cfg.AutoUpdateEnabled && !updateEnabled {
+		updateStatus.SetError(fmt.Errorf("current build has no valid monotonic update sequence"))
+	}
+	handler.SetUpdateStatus(updateStatus)
 	httpServer := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           server.New(cfg, handler, metrics),
@@ -162,7 +176,7 @@ func runProxy(parent context.Context, configPath string) error {
 	} else {
 		log.Printf("[catalog] signed ZeroScan chain catalog disabled; autonomous local configuration remains active")
 	}
-	updateApplied := startUpdateMonitor(ctx, cfg)
+	updateApplied := startUpdateMonitor(ctx, cfg, updateSequence, updateStatus)
 
 	select {
 	case <-ctx.Done():
@@ -214,12 +228,13 @@ func chainCatalogOptions(cfg config.Config) chaincatalog.Options {
 	}
 }
 
-func startUpdateMonitor(ctx context.Context, cfg config.Config) <-chan updater.Result {
+func startUpdateMonitor(ctx context.Context, cfg config.Config, sequence int64, status *updater.StatusStore) <-chan updater.Result {
 	applied := make(chan updater.Result, 1)
-	sequence, err := strconv.ParseInt(buildSequence, 10, 64)
-	if err != nil || sequence <= 0 || !cfg.AutoUpdateEnabled {
+	if sequence <= 0 || !cfg.AutoUpdateEnabled {
 		if !cfg.AutoUpdateEnabled {
 			log.Printf("[update] automatic update checks disabled by config")
+		} else {
+			log.Printf("[update] automatic update checks unavailable: current build sequence is invalid")
 		}
 		return applied
 	}
@@ -231,6 +246,7 @@ func startUpdateMonitor(ctx context.Context, cfg config.Config) <-chan updater.R
 		Interval:        time.Duration(cfg.UpdateCheckInterval) * time.Second,
 		InitialDelay:    20 * time.Second,
 		Logf:            log.Printf,
+		Status:          status,
 	}, applied)
 	return applied
 }

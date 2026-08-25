@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -49,6 +50,38 @@ func signedUpdateServer(t *testing.T, goos, goarch string, body []byte) (*httpte
 		}
 	}))
 	return server, base64.StdEncoding.EncodeToString(publicKey)
+}
+
+func TestStatusStoreReportsModeChecksAndErrors(t *testing.T) {
+	status := NewStatusStore(true, "v1.2.0", 120, "https://example.test/update.json", "linux")
+	initial := status.Snapshot()
+	if !initial.Enabled || initial.Mode != "automatic" || initial.CurrentSequence != 120 {
+		t.Fatalf("unexpected initial status: %+v", initial)
+	}
+
+	status.beginCheck()
+	checking := status.Snapshot()
+	if !checking.Checking || checking.LastChecked == "" {
+		t.Fatalf("check was not exposed: %+v", checking)
+	}
+
+	status.finish(Result{}, context.DeadlineExceeded)
+	failed := status.Snapshot()
+	if failed.Checking || !strings.Contains(failed.LastError, "deadline") {
+		t.Fatalf("failure was not exposed: %+v", failed)
+	}
+
+	status.beginCheck()
+	status.finish(Result{Available: true, Version: "v1.2.1", Sequence: 121}, nil)
+	success := status.Snapshot()
+	if success.LastSuccess == "" || success.LastError != "" || success.AvailableVersion != "v1.2.1" || success.AvailableSequence != 121 {
+		t.Fatalf("successful update check was not exposed: %+v", success)
+	}
+
+	disabled := NewStatusStore(false, "dev", 0, "", "windows").Snapshot()
+	if disabled.Enabled || disabled.Mode != "disabled" {
+		t.Fatalf("unexpected disabled status: %+v", disabled)
+	}
 }
 
 func signedManifestBytes(baseURL, goos, goarch string, hash [32]byte) ([]byte, error) {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/zerohourcash/zhp2pproxy/internal/config"
 	"github.com/zerohourcash/zhp2pproxy/internal/node"
+	"github.com/zerohourcash/zhp2pproxy/internal/updater"
 	"github.com/zerohourcash/zhp2pproxy/pkg/jsonrpc"
 )
 
@@ -47,6 +48,7 @@ func TestHealthReportsLocalNodeAndP2PConnectivity(t *testing.T) {
 	cfg := config.Default()
 	cfg.RPCURL = rpcServer.URL
 	handler := NewHandler(cfg, node.NewClient(cfg), &healthTestP2P{peers: 2}, &Metrics{})
+	handler.SetUpdateStatus(updater.NewStatusStore(true, "v1.2.1", 121, cfg.UpdateManifestURL, "linux"))
 	recorder := httptest.NewRecorder()
 	handler.Health(recorder, httptest.NewRequest(http.MethodGet, "/health", nil))
 
@@ -66,6 +68,11 @@ func TestHealthReportsLocalNodeAndP2PConnectivity(t *testing.T) {
 			NetworkID      string `json:"network_id"`
 			PeerID         string `json:"peer_id"`
 		} `json:"p2p_network"`
+		AutoUpdate struct {
+			Enabled        bool   `json:"enabled"`
+			Mode           string `json:"mode"`
+			CurrentVersion string `json:"current_version"`
+		} `json:"auto_update"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
@@ -81,6 +88,9 @@ func TestHealthReportsLocalNodeAndP2PConnectivity(t *testing.T) {
 	}
 	if response.P2PNetwork.NetworkID != "test-network" || response.P2PNetwork.PeerID != "test-peer-id" {
 		t.Fatalf("unexpected P2P identity: %+v", response.P2PNetwork)
+	}
+	if !response.AutoUpdate.Enabled || response.AutoUpdate.Mode != "automatic" || response.AutoUpdate.CurrentVersion != "v1.2.1" {
+		t.Fatalf("unexpected update health: %+v", response.AutoUpdate)
 	}
 }
 

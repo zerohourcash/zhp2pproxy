@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zerohourcash/zhp2pproxy/internal/securefs"
@@ -51,6 +52,86 @@ type Result struct {
 	DownloadURL string
 }
 
+type Status struct {
+	Enabled           bool   `json:"enabled"`
+	Mode              string `json:"mode"`
+	Source            string `json:"source"`
+	CurrentVersion    string `json:"current_version"`
+	CurrentSequence   int64  `json:"current_sequence"`
+	Checking          bool   `json:"checking"`
+	LastChecked       string `json:"last_checked,omitempty"`
+	LastSuccess       string `json:"last_success,omitempty"`
+	LastError         string `json:"last_error,omitempty"`
+	AvailableVersion  string `json:"available_version,omitempty"`
+	AvailableSequence int64  `json:"available_sequence,omitempty"`
+}
+
+type StatusStore struct {
+	mu     sync.RWMutex
+	status Status
+}
+
+func NewStatusStore(enabled bool, currentVersion string, currentSequence int64, source, goos string) *StatusStore {
+	mode := "disabled"
+	if enabled {
+		mode = "check-only"
+		switch goos {
+		case "linux":
+			mode = "automatic"
+		case "windows":
+			mode = "notify"
+		}
+	}
+	return &StatusStore{status: Status{
+		Enabled: enabled, Mode: mode, Source: source,
+		CurrentVersion: currentVersion, CurrentSequence: currentSequence,
+	}}
+}
+
+// SetError exposes a startup/configuration error even when the monitor cannot
+// be started. This makes disabled development builds distinguishable from a
+// configured release whose update sequence is invalid.
+func (s *StatusStore) SetError(err error) {
+	if s == nil || err == nil {
+		return
+	}
+	s.mu.Lock()
+	s.status.LastError = err.Error()
+	s.mu.Unlock()
+}
+
+func (s *StatusStore) Snapshot() Status {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.status
+}
+
+func (s *StatusStore) beginCheck() {
+	s.mu.Lock()
+	s.status.Checking = true
+	s.status.LastChecked = time.Now().UTC().Format(time.RFC3339)
+	s.mu.Unlock()
+}
+
+func (s *StatusStore) finish(result Result, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.status.Checking = false
+	if err != nil {
+		s.status.LastError = err.Error()
+		return
+	}
+	s.status.LastSuccess = time.Now().UTC().Format(time.RFC3339)
+	s.status.LastError = ""
+	if result.Available {
+		s.status.AvailableVersion = result.Version
+		s.status.AvailableSequence = result.Sequence
+	} else {
+		s.status.AvailableVersion = ""
+		s.status.AvailableSequence = 0
+	}
+}
+
 type Options struct {
 	CurrentVersion   string
 	CurrentSequence  int64
@@ -64,6 +145,7 @@ type Options struct {
 	GOARCH           string
 	AllowHTTPForTest bool
 	Logf             func(string, ...any)
+	Status           *StatusStore
 }
 
 func Monitor(ctx context.Context, options Options, applied chan<- Result) {
@@ -83,7 +165,13 @@ func Monitor(ctx context.Context, options Options, applied chan<- Result) {
 		case <-ctx.Done():
 			return
 		case <-timer.C:
+			if options.Status != nil {
+				options.Status.beginCheck()
+			}
 			result, err := CheckAndApply(ctx, options)
+			if options.Status != nil {
+				options.Status.finish(result, err)
+			}
 			if err != nil {
 				logf(options, "[update] check failed: %v", err)
 			} else if result.Installed {

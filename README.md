@@ -37,7 +37,7 @@ sudo ZHP2P_USER=zhp2pproxy bash /tmp/install-zhp2pproxy.sh
 `identity.key` и `peers.json`. Предыдущий бинарник остается как
 `zhp2pproxy.previous`.
 
-После первого релиза с update-контуром Linux-служба проверяет подписанный
+Linux-служба автоматически проверяет подписанный
 `https://github.com/zerohourcash/zhp2pproxy/releases/latest/download/update.json`
 через 20 секунд после запуска
 и далее раз в 5 минут. Manifest проверяется встроенным Ed25519 public key,
@@ -55,6 +55,15 @@ sudo ZHP2P_USER=zhp2pproxy bash /tmp/install-zhp2pproxy.sh
 Manifest и бинарники принимаются только из GitHub Releases официального
 репозитория `zerohourcash/zhp2pproxy`; произвольный `update_manifest_url`
 автоматически заменяется официальным.
+
+Текущее состояние обновлятора доступно в полях `auto_update` обоих публичных
+диагностических ответов — `GET /health` и `GET /info`. Там видны режим,
+текущая и найденная версии, время последней успешной проверки и последняя
+ошибка. Режим `automatic` на Linux означает проверку, атомарную установку и
+перезапуск через systemd; `disabled` — явное отключение в конфиге. Windows до
+публикации Authenticode-подписанного `.exe` работает в безопасном режиме
+`notify`: проверяет официальный релиз и выводит ссылку, но не заменяет
+исполняемый файл незаметно для пользователя.
 
 Проверка после установки:
 

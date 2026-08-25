@@ -20,6 +20,7 @@ import (
 	"github.com/zerohourcash/zhp2pproxy/internal/multichain"
 	"github.com/zerohourcash/zhp2pproxy/internal/node"
 	"github.com/zerohourcash/zhp2pproxy/internal/rpcaudit"
+	"github.com/zerohourcash/zhp2pproxy/internal/updater"
 	"github.com/zerohourcash/zhp2pproxy/pkg/jsonrpc"
 )
 
@@ -58,10 +59,22 @@ type Handler struct {
 	p2p     P2PRPC
 	metrics *Metrics
 	chains  *multichain.Client
+	updates *updater.StatusStore
 }
 
 func (h *Handler) SetMultichain(chains *multichain.Client) {
 	h.chains = chains
+}
+
+func (h *Handler) SetUpdateStatus(status *updater.StatusStore) {
+	h.updates = status
+}
+
+func (h *Handler) updateStatus() any {
+	if h.updates == nil {
+		return nil
+	}
+	return h.updates.Snapshot()
 }
 
 func NewHandler(cfg config.Config, local *node.Client, p2p P2PRPC, metrics *Metrics) *Handler {
@@ -258,8 +271,9 @@ func (h *Handler) Info(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	info := map[string]any{
-		"metrics": h.metrics.Snapshot(),
-		"p2p":     nil,
+		"metrics":     h.metrics.Snapshot(),
+		"p2p":         nil,
+		"auto_update": h.updateStatus(),
 		"management": map[string]any{
 			"enabled":          !h.cfg.MultichainCatalogDisabled,
 			"primary":          h.cfg.MultichainCatalogURL,
@@ -356,7 +370,8 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, map[string]any{
-		"ok": localConnected || p2pConnected || chainConnected,
+		"ok":          localConnected || p2pConnected || chainConnected,
+		"auto_update": h.updateStatus(),
 		"local_node": map[string]any{
 			"connected":    localConnected,
 			"block_height": blockHeight,
