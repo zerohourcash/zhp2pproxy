@@ -5,6 +5,7 @@ identity.key*
 proxy.json*
 proxy.example.json
 peers.json*
+chains.catalog.json*
 zerohour.conf*
 *.pem
 *.key
