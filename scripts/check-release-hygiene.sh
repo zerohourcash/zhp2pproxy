@@ -25,10 +25,6 @@ grep -Fq "$expected_key" cmd/proxy/main.go || {
   printf 'embedded updater public key does not match the release key\n' >&2
   failed=1
 }
-grep -Fq "$expected_key" install.sh || {
-  printf 'Linux installer public key does not match the release key\n' >&2
-  failed=1
-}
 derived_key="$(openssl pkey -pubin -in release/update-public.pem -outform DER 2>/dev/null | tail -c 32 | base64 | tr -d '\n')"
 [[ "$derived_key" == "$expected_key" ]] || {
   printf 'release/update-public.pem does not match the pinned updater key\n' >&2

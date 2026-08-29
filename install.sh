@@ -3,12 +3,10 @@ set -Eeuo pipefail
 
 PROGRAM="zhp2pproxy"
 SERVICE_NAME="zhp2pproxy.service"
-BASE_URL="${ZHP2P_BASE_URL:-https://github.com/zerohourcash/zhp2pproxy/releases/latest/download}"
+RELEASE_API_URL="${ZHP2P_RELEASE_API_URL:-https://api.github.com/repos/zerohourcash/zhp2pproxy/releases/latest}"
+RESOURCE_BASE_URL="${ZHP2P_RESOURCE_BASE_URL:-https://link.zeroscan.st/zhp2pproxy}"
 TARGET_USER="${ZHP2P_USER:-}"
 SKIP_SYSTEMD="${ZHP2P_SKIP_SYSTEMD:-0}"
-UPDATE_PUBLIC_KEY_PEM='-----BEGIN PUBLIC KEY-----
-MCowBQYDK2VwAyEAGnbiMTDyAI1NenxfEyJZihgFGsNUWmSVkke1Z6PweJA=
------END PUBLIC KEY-----'
 
 log() {
   printf '[zhp2pproxy-install] %s\n' "$*"
@@ -55,12 +53,10 @@ if [[ "$SKIP_SYSTEMD" != "1" && "$EUID" -ne 0 ]]; then
   fail "run as root to install and enable the systemd service"
 fi
 
-[[ "$BASE_URL" == https://* ]] || fail "download base URL must use https://"
+[[ "$RELEASE_API_URL" == https://api.github.com/repos/zerohourcash/zhp2pproxy/releases/* ]] || fail "release metadata URL must use the official GitHub API"
+[[ "$RESOURCE_BASE_URL" == https://* ]] || fail "installer resource URL must use https://"
 
-need_command tar
 need_command sha256sum
-need_command openssl
-need_command base64
 need_command install
 need_command sed
 need_command getent
@@ -106,49 +102,46 @@ fi
 [[ "$INSTALL_DIR" != "/" ]] || fail "refusing to use / as installation directory"
 
 ARCH="$(resolve_arch)"
-ARCHIVE="zhp2pproxy-linux-${ARCH}.tar.gz"
+BINARY_NAME="zhp2pproxy-linux-${ARCH}.bin"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/zhp2pproxy-install.XXXXXX")"
 cleanup() {
-  rm -f "$TMP_DIR/$ARCHIVE" "$TMP_DIR/SHA256SUMS" \
-    "$TMP_DIR/SHA256SUMS.sig" "$TMP_DIR/SHA256SUMS.sig.raw" \
-    "$TMP_DIR/update-public.pem" "$TMP_DIR/rendered.service"
-  if [[ -d "$TMP_DIR/unpacked" ]]; then
-    find "$TMP_DIR/unpacked" -type f -delete
-    find "$TMP_DIR/unpacked" -depth -type d -empty -delete
-  fi
+  rm -f "$TMP_DIR/$BINARY_NAME" "$TMP_DIR/release.json" \
+    "$TMP_DIR/proxy.install.json" "$TMP_DIR/zhp2pproxy.service.in" \
+    "$TMP_DIR/rendered.service"
   rmdir "$TMP_DIR" 2>/dev/null || true
 }
 trap cleanup EXIT
 
-log "downloading $ARCHIVE"
-download "$BASE_URL/$ARCHIVE" "$TMP_DIR/$ARCHIVE"
-download "$BASE_URL/SHA256SUMS" "$TMP_DIR/SHA256SUMS"
-download "$BASE_URL/SHA256SUMS.sig" "$TMP_DIR/SHA256SUMS.sig"
+download "$RELEASE_API_URL" "$TMP_DIR/release.json"
+ASSET_URL="$(
+  tr ',' '\n' <"$TMP_DIR/release.json" | awk -F'"' -v asset="$BINARY_NAME" '
+    $0 ~ "\"name\"[[:space:]]*:[[:space:]]*\"" asset "\"" { wanted = 1 }
+    wanted && $2 == "browser_download_url" { print $4; exit }
+  '
+)"
+EXPECTED_SHA256="$(
+  tr ',' '\n' <"$TMP_DIR/release.json" | awk -F'"' -v asset="$BINARY_NAME" '
+    $0 ~ "\"name\"[[:space:]]*:[[:space:]]*\"" asset "\"" { wanted = 1 }
+    wanted && $2 == "digest" && $4 ~ /^sha256:[0-9a-fA-F]{64}$/ {
+      sub(/^sha256:/, "", $4)
+      print $4
+      exit
+    }
+  '
+)"
+[[ "$ASSET_URL" =~ ^https://github\.com/zerohourcash/zhp2pproxy/releases/download/[^/]+/${BINARY_NAME}$ ]] || fail "official release metadata has no valid URL for $BINARY_NAME"
+[[ "$EXPECTED_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || fail "official release metadata has no SHA-256 digest for $BINARY_NAME"
 
-printf '%s\n' "$UPDATE_PUBLIC_KEY_PEM" >"$TMP_DIR/update-public.pem"
-base64 --decode "$TMP_DIR/SHA256SUMS.sig" >"$TMP_DIR/SHA256SUMS.sig.raw" \
-  || fail "release checksum signature is not valid base64"
-openssl pkeyutl -verify -pubin -rawin \
-  -inkey "$TMP_DIR/update-public.pem" \
-  -in "$TMP_DIR/SHA256SUMS" \
-  -sigfile "$TMP_DIR/SHA256SUMS.sig.raw" >/dev/null \
-  || fail "release checksum signature verification failed"
-log "verified official Ed25519 release signature"
+log "downloading $BINARY_NAME"
+download "$ASSET_URL" "$TMP_DIR/$BINARY_NAME"
+ACTUAL_SHA256="$(sha256sum "$TMP_DIR/$BINARY_NAME" | awk '{print $1}')"
+[[ "$ACTUAL_SHA256" == "$EXPECTED_SHA256" ]] || fail "SHA-256 validation failed for $BINARY_NAME"
+log "verified official GitHub asset SHA-256: $ACTUAL_SHA256"
 
-EXPECTED_LINE="$(awk -v file="$ARCHIVE" '$2 == file || $2 == "*" file { print $1 "  " file; exit }' "$TMP_DIR/SHA256SUMS")"
-[[ -n "$EXPECTED_LINE" ]] || fail "checksum for $ARCHIVE is missing"
-(
-  cd "$TMP_DIR"
-  printf '%s\n' "$EXPECTED_LINE" | sha256sum --check --status -
-) || fail "checksum validation failed for $ARCHIVE"
-
-mkdir "$TMP_DIR/unpacked"
-tar --extract --gzip --file "$TMP_DIR/$ARCHIVE" \
-  --directory "$TMP_DIR/unpacked" --no-same-owner --no-same-permissions
-PACKAGE_DIR="$TMP_DIR/unpacked/zhp2pproxy-linux-${ARCH}"
-[[ -x "$PACKAGE_DIR/zhp2pproxy" ]] || fail "archive does not contain the executable"
-[[ -f "$PACKAGE_DIR/proxy.install.json" ]] || fail "archive does not contain the safe config template"
-[[ -f "$PACKAGE_DIR/zhp2pproxy.service.in" ]] || fail "archive does not contain the systemd template"
+download "$RESOURCE_BASE_URL/proxy.install.json" "$TMP_DIR/proxy.install.json"
+download "$RESOURCE_BASE_URL/zhp2pproxy.service.in" "$TMP_DIR/zhp2pproxy.service.in"
+[[ -s "$TMP_DIR/proxy.install.json" ]] || fail "safe config template is unavailable"
+[[ -s "$TMP_DIR/zhp2pproxy.service.in" ]] || fail "systemd template is unavailable"
 
 install -d -m 0750 -o "$TARGET_USER" -g "$TARGET_GROUP" "$INSTALL_DIR"
 if [[ -x "$INSTALL_DIR/zhp2pproxy" ]]; then
@@ -156,11 +149,9 @@ if [[ -x "$INSTALL_DIR/zhp2pproxy" ]]; then
     "$INSTALL_DIR/zhp2pproxy" "$INSTALL_DIR/zhp2pproxy.previous"
 fi
 install -m 0755 -o "$TARGET_USER" -g "$TARGET_GROUP" \
-  "$PACKAGE_DIR/zhp2pproxy" "$INSTALL_DIR/zhp2pproxy"
-install -m 0644 -o "$TARGET_USER" -g "$TARGET_GROUP" \
-  "$PACKAGE_DIR/README.md" "$INSTALL_DIR/README.md"
+  "$TMP_DIR/$BINARY_NAME" "$INSTALL_DIR/zhp2pproxy"
 install -m 0600 -o "$TARGET_USER" -g "$TARGET_GROUP" \
-  "$PACKAGE_DIR/proxy.install.json" "$INSTALL_DIR/proxy.example.json"
+  "$TMP_DIR/proxy.install.json" "$INSTALL_DIR/proxy.example.json"
 
 if [[ ! -f "$INSTALL_DIR/proxy.json" ]]; then
   LEGACY_RUNTIME_DIR="${ZHP2P_LEGACY_RUNTIME_DIR:-/root/zhp2pproxy}"
@@ -176,7 +167,7 @@ if [[ ! -f "$INSTALL_DIR/proxy.json" ]]; then
     log "migrated existing runtime state from $LEGACY_RUNTIME_DIR"
   else
     install -m 0600 -o "$TARGET_USER" -g "$TARGET_GROUP" \
-      "$PACKAGE_DIR/proxy.install.json" "$INSTALL_DIR/proxy.json"
+      "$TMP_DIR/proxy.install.json" "$INSTALL_DIR/proxy.json"
     log "created $INSTALL_DIR/proxy.json"
   fi
 else
@@ -193,7 +184,7 @@ fi
 
 need_command systemctl
 need_command seq
-UNIT_TEMPLATE="$PACKAGE_DIR/zhp2pproxy.service.in"
+UNIT_TEMPLATE="$TMP_DIR/zhp2pproxy.service.in"
 USER_REPL="$(escape_sed_replacement "$TARGET_USER")"
 GROUP_REPL="$(escape_sed_replacement "$TARGET_GROUP")"
 HOME_REPL="$(escape_sed_replacement "$TARGET_HOME")"

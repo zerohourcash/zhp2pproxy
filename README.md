@@ -11,16 +11,16 @@ wallet keys or unrestricted node administration. The project is licensed under
 Установка последней официальной версии одной строкой:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -fsSL https://github.com/zerohourcash/zhp2pproxy/releases/latest/download/install.sh | sudo bash
+curl --proto '=https' --tlsv1.2 -fsSL https://link.zeroscan.st/zhp2pproxy/install.sh | sudo bash
 ```
 
-Установщик поддерживает `amd64` и `arm64`, проверяет Ed25519-подпись официального
-файла checksums, затем SHA-256 архива, создает отдельного непривилегированного
-пользователя `zhp2pproxy`, устанавливает hardened systemd unit и сразу включает
-автозапуск:
+Установщик поддерживает `amd64` и `arm64`, получает точную ссылку и SHA-256
+исполняемого файла из официального GitHub Releases API, создает отдельного
+непривилегированного пользователя `zhp2pproxy`, устанавливает hardened systemd
+unit и сразу включает автозапуск:
 
 ```bash
-curl -fsSL https://github.com/zerohourcash/zhp2pproxy/releases/latest/download/install.sh -o /tmp/install-zhp2pproxy.sh
+curl -fsSL https://link.zeroscan.st/zhp2pproxy/install.sh -o /tmp/install-zhp2pproxy.sh
 sudo bash /tmp/install-zhp2pproxy.sh
 ```
 
@@ -175,16 +175,13 @@ sequence, по которому автоматическое обновлени�
 
 ## Установка на Windows
 
-Код поддерживает 64-битные Windows на `x64` и `ARM64`, но в текущих официальных
-релизах Windows-бинарники не опубликованы: для них требуется
-доверенная Authenticode-подпись в дополнение к Ed25519-подписи обновлений.
-Не распространяй локально собранные неподписанные EXE. После подключения
-сертификата официальные файлы появятся по адресам:
+Код поддерживает 64-битные Windows на `x64` и `ARM64`. Официальные EXE доступны
+в GitHub Releases по адресам:
 
 - `https://github.com/zerohourcash/zhp2pproxy/releases/latest/download/zhp2pproxy-windows-amd64.exe`
 - `https://github.com/zerohourcash/zhp2pproxy/releases/latest/download/zhp2pproxy-windows-arm64.exe`
 
-Официально подписанный EXE сам копирует себя в
+EXE сам копирует себя в
 `%USERPROFILE%\zhp2pproxy\zhp2pproxy.exe`, продолжает
 работу из постоянной папки, создает runtime-каталог рядом с данными ZHCASH-ноды
 и регистрирует автозагрузку текущего пользователя. Исходный файл в Downloads
@@ -194,10 +191,11 @@ sequence, по которому автоматическое обновлени�
 Windows-службы и полной диагностики, но для обычного первого запуска он не
 требуется.
 
-Установщик скачивает архив только по HTTPS, сверяет SHA-256 и требует валидную
-Authenticode-подпись находящегося внутри EXE, устанавливает
-файлы в `%USERPROFILE%\zhp2pproxy` и запускает сам
-`zhp2pproxy.exe` в обычном видимом окне консоли. EXE регистрирует точную команду
+Текущий выпуск проверяется SHA-256 digest в GitHub Releases. Пока проект не
+получил доверенный Authenticode-сертификат, Windows может показать SmartScreen;
+автоматическая тихая замена EXE поэтому отключена, а обновлятор работает в
+режиме `notify`. После ручного запуска `zhp2pproxy.exe` работает в обычном
+видимом окне консоли и регистрирует точную команду
 с абсолютными путями в
 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, поэтому proxy снова
 открывается после входа текущего пользователя в Windows. Старые служба

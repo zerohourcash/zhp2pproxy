@@ -17,6 +17,7 @@ UPDATE_SIGNING_KEY="${UPDATE_SIGNING_KEY:-}"
 WINDOWS_SIGN_COMMAND="${WINDOWS_SIGN_COMMAND:-}"
 WINDOWS_VERIFY_COMMAND="${WINDOWS_VERIFY_COMMAND:-}"
 RELEASE_WINDOWS="${RELEASE_WINDOWS:-1}"
+ALLOW_UNSIGNED_WINDOWS_RELEASE="${ALLOW_UNSIGNED_WINDOWS_RELEASE:-0}"
 ALLOW_DIRTY_LOCAL_RELEASE="${ALLOW_DIRTY_LOCAL_RELEASE:-0}"
 ARCHES=(amd64 arm64)
 TMP_DIR=""
@@ -31,6 +32,10 @@ TMP_DIR=""
 }
 [[ "$RELEASE_WINDOWS" == "0" || "$RELEASE_WINDOWS" == "1" ]] || {
   printf 'RELEASE_WINDOWS must be 0 or 1\n' >&2
+  exit 1
+}
+[[ "$ALLOW_UNSIGNED_WINDOWS_RELEASE" == "0" || "$ALLOW_UNSIGNED_WINDOWS_RELEASE" == "1" ]] || {
+  printf 'ALLOW_UNSIGNED_WINDOWS_RELEASE must be 0 or 1\n' >&2
   exit 1
 }
 
@@ -63,14 +68,16 @@ if [[ -n "$PUBLISH_DIR" ]]; then
     exit 1
   }
   if [[ "$RELEASE_WINDOWS" == "1" ]]; then
-    [[ -n "$WINDOWS_SIGN_COMMAND" ]] || {
-      printf 'refusing to publish Windows without WINDOWS_SIGN_COMMAND\n' >&2
-      exit 1
-    }
-    [[ -n "$WINDOWS_VERIFY_COMMAND" ]] || {
-      printf 'refusing to publish Windows without WINDOWS_VERIFY_COMMAND\n' >&2
-      exit 1
-    }
+    if [[ "$ALLOW_UNSIGNED_WINDOWS_RELEASE" != "1" ]]; then
+      [[ -n "$WINDOWS_SIGN_COMMAND" ]] || {
+        printf 'refusing to publish Windows without WINDOWS_SIGN_COMMAND\n' >&2
+        exit 1
+      }
+      [[ -n "$WINDOWS_VERIFY_COMMAND" ]] || {
+        printf 'refusing to publish Windows without WINDOWS_VERIFY_COMMAND\n' >&2
+        exit 1
+      }
+    fi
   fi
   [[ -n "$SOURCE_TAG" ]] || {
     printf 'refusing to publish a commit without an exact Git tag\n' >&2
@@ -132,7 +139,11 @@ sign_windows_binary() {
     return
   fi
   if [[ -n "$PUBLISH_DIR" ]]; then
-    printf 'refusing to publish unsigned Windows binaries; set WINDOWS_SIGN_COMMAND to an Authenticode signer\n' >&2
+    if [[ "$ALLOW_UNSIGNED_WINDOWS_RELEASE" == "1" ]]; then
+      printf 'warning: publishing unsigned Windows binaries by explicit operator request\n' >&2
+      return
+    fi
+    printf 'refusing to publish unsigned Windows binaries; set WINDOWS_SIGN_COMMAND or explicitly allow an unsigned release\n' >&2
     exit 1
   fi
   printf 'warning: local Windows build is unsigned and must not be publicly distributed\n' >&2
@@ -280,12 +291,22 @@ chmod 0755 "$DIST_DIR/install.sh"
 
 if [[ -n "$PUBLISH_DIR" ]]; then
   install -d -m 0755 "$PUBLISH_DIR"
-  for file in "${release_files[@]}" SHA256SUMS SHA256SUMS.sig; do
-    install -m 0644 "$DIST_DIR/$file" "$PUBLISH_DIR/$file"
+  public_release_files=(
+    zhp2pproxy-linux-amd64.bin
+    zhp2pproxy-linux-arm64.bin
+  )
+  if [[ "$RELEASE_WINDOWS" == "1" ]]; then
+    public_release_files=(
+      zhp2pproxy-windows-amd64.exe
+      zhp2pproxy-windows-arm64.exe
+      "${public_release_files[@]}"
+    )
+  fi
+  for file in "${public_release_files[@]}"; do
+    install -m 0755 "$DIST_DIR/$file" "$PUBLISH_DIR/$file"
   done
   install -m 0644 "$DIST_DIR/update.json" "$PUBLISH_DIR/update.json"
   install -m 0644 "$DIST_DIR/update.json.sig" "$PUBLISH_DIR/update.json.sig"
-  install -m 0755 "$DIST_DIR/install.sh" "$PUBLISH_DIR/install.sh"
 fi
 
 printf 'release complete: version=%s\n' "$VERSION"

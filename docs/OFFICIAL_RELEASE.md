@@ -48,25 +48,28 @@ PUBLISH_DIR=/secure/release-staging/vX.Y.Z \
 ./release.sh
 ```
 
-When a trusted Authenticode certificate is unavailable, publish a complete
-Linux-only release instead of unsigned Windows binaries:
+When a trusted Authenticode certificate is unavailable, the default remains a
+Linux-only release. An operator may publish visible, manual-update Windows
+binaries only after an explicit product decision:
 
 ```bash
 UPDATE_SIGNING_KEY=/secure/offline/update-ed25519.pem \
-RELEASE_WINDOWS=0 \
+RELEASE_WINDOWS=1 \
+ALLOW_UNSIGNED_WINDOWS_RELEASE=1 \
 PUBLISH_DIR=/secure/release-staging/vX.Y.Z \
 ./release.sh
 ```
 
-This mode omits Windows artifacts, `install.ps1` and Windows entries in the
-signed update manifest. `RELEASE_WINDOWS=1` remains the default and refuses a
-public staging build unless both Windows signing commands are configured.
+Unsigned Windows builds remain notification-only and must be identified as
+such in release notes. The public staging directory intentionally contains only
+Windows EXE files, Linux executable binaries, and the signed `update.json` plus
+`update.json.sig`. Documentation, SBOM, checksums and license bundles stay in
+Git source or internal build output instead of cluttering GitHub release assets.
 
-Review `SHA256SUMS`, verify `SHA256SUMS.sig` with
-`release/update-public.pem`, inspect `SOURCE_COMMIT` and the SBOM, then copy the
-immutable staging directory to the release host. Confirm that
-`THIRD_PARTY_LICENSES.tar.gz` is present and covered by the signed checksums.
-Never use a public-release override for unsigned or dirty artifacts.
+Review internal `SHA256SUMS`, verify `SHA256SUMS.sig` with
+`release/update-public.pem`, inspect `SOURCE_COMMIT` and the SBOM, then verify
+that the public staging directory contains only the expected executables and
+the signed update manifest pair. Never publish from a dirty worktree.
 
 ## Rollout
 
