@@ -22,13 +22,16 @@ import (
 	"github.com/libp2p/go-libp2p"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/event"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/pnet"
 	"github.com/libp2p/go-libp2p/core/protocol"
+	autorelay "github.com/libp2p/go-libp2p/p2p/host/autorelay"
 	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 	relayv2 "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
+	holepunch "github.com/libp2p/go-libp2p/p2p/protocol/holepunch"
 	ma "github.com/multiformats/go-multiaddr"
 	"golang.org/x/time/rate"
 
@@ -49,61 +52,65 @@ const (
 	nodeStreamTimeout = 20 * time.Second
 	bootstrapTimeout  = 10 * time.Second
 	maxBootstrapPeers = 256
+	maxBootstrapDials = 32
 	maxAnnouncedAddrs = 32
 )
 
 type Service struct {
-	cfg         config.Config
-	host        host.Host
-	browserHost host.Host
-	pubsub      *pubsub.PubSub
-	topic       *pubsub.Topic
-	local       *node.Client
-	chains      *multichain.Client
-	overlay     overlaySpec
-	tcpLn       net.Listener
-	rpcPeerMu   sync.Mutex
-	rpcPeerIx   int
-	auditMu     sync.RWMutex
-	audit       *rpcaudit.Tracker
-	statsMu     sync.Mutex
-	stats       map[peer.ID]*peerStats
-	rpcMu       sync.Mutex
-	rpcLimits   map[peer.ID]*rate.Limiter
-	rpcGlobal   *rate.Limiter
-	rpcSlots    chan struct{}
-	scanGlobal  *rate.Limiter
-	scanSlots   chan struct{}
-	tunnelMu    sync.Mutex
-	tunnels     map[peer.ID]int
-	p2pHealth   NodeP2PStatus
-	capMu       sync.RWMutex
-	nodePeers   map[peer.ID]bool
-	cancel      context.CancelFunc
-	wg          sync.WaitGroup
-	closeOnce   sync.Once
+	cfg           config.Config
+	host          host.Host
+	browserHost   host.Host
+	pubsub        *pubsub.PubSub
+	topic         *pubsub.Topic
+	local         *node.Client
+	chains        *multichain.Client
+	overlay       overlaySpec
+	tcpLn         net.Listener
+	rpcPeerMu     sync.Mutex
+	rpcPeerIx     int
+	auditMu       sync.RWMutex
+	audit         *rpcaudit.Tracker
+	statsMu       sync.Mutex
+	stats         map[peer.ID]*peerStats
+	rpcMu         sync.Mutex
+	rpcLimits     map[peer.ID]*rate.Limiter
+	rpcGlobal     *rate.Limiter
+	rpcSlots      chan struct{}
+	scanGlobal    *rate.Limiter
+	scanSlots     chan struct{}
+	tunnelMu      sync.Mutex
+	tunnels       map[peer.ID]int
+	p2pHealth     NodeP2PStatus
+	connectivity  *connectivityTracker
+	peerDialQueue chan peer.AddrInfo
+	capMu         sync.RWMutex
+	nodePeers     map[peer.ID]bool
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
+	closeOnce     sync.Once
 }
 
 type Info struct {
-	PeerID             string   `json:"peer_id"`
-	NetworkID          string   `json:"network_id"`
-	Listen             []string `json:"listen,omitempty"`
-	Peers              []string `json:"peers,omitempty"`
-	Private            bool     `json:"private"`
-	OverlayMode        string   `json:"overlay_mode"`
-	ForceRelay         bool     `json:"force_relay"`
-	Relay              bool     `json:"relay"`
-	IPv6               bool     `json:"ipv6"`
-	QUIC               bool     `json:"quic"`
-	NATPortMap         bool     `json:"nat_port_map"`
-	HolePunching       bool     `json:"hole_punching"`
-	Rendezvous         string   `json:"rendezvous"`
-	Topic              string   `json:"topic"`
-	RPCProtocol        string   `json:"rpc_protocol"`
-	NodeP2P            string   `json:"node_p2p_protocol"`
-	P2PProxy           string   `json:"p2p_proxy_listen"`
-	BrowserRPCProtocol string   `json:"browser_rpc_protocol,omitempty"`
-	BrowserAddrs       []string `json:"browser_addrs,omitempty"`
+	PeerID             string             `json:"peer_id"`
+	NetworkID          string             `json:"network_id"`
+	Listen             []string           `json:"listen,omitempty"`
+	Peers              []string           `json:"peers,omitempty"`
+	Private            bool               `json:"private"`
+	OverlayMode        string             `json:"overlay_mode"`
+	ForceRelay         bool               `json:"force_relay"`
+	Relay              bool               `json:"relay"`
+	IPv6               bool               `json:"ipv6"`
+	QUIC               bool               `json:"quic"`
+	NATPortMap         bool               `json:"nat_port_map"`
+	HolePunching       bool               `json:"hole_punching"`
+	NATTraversal       NATTraversalStatus `json:"nat_traversal"`
+	Rendezvous         string             `json:"rendezvous"`
+	Topic              string             `json:"topic"`
+	RPCProtocol        string             `json:"rpc_protocol"`
+	NodeP2P            string             `json:"node_p2p_protocol"`
+	P2PProxy           string             `json:"p2p_proxy_listen"`
+	BrowserRPCProtocol string             `json:"browser_rpc_protocol,omitempty"`
+	BrowserAddrs       []string           `json:"browser_addrs,omitempty"`
 }
 
 type overlaySpec struct {
@@ -130,23 +137,24 @@ type bootstrapDocument struct {
 }
 
 type AdminState struct {
-	NetworkID          string      `json:"network_id"`
-	Private            bool        `json:"private"`
-	PeerID             string      `json:"peer_id"`
-	OverlayMode        string      `json:"overlay_mode"`
-	ForceRelay         bool        `json:"force_relay"`
-	Rendezvous         string      `json:"rendezvous"`
-	Topic              string      `json:"topic"`
-	RPCProtocol        string      `json:"rpc_protocol"`
-	NodeP2PProtocol    string      `json:"node_p2p_protocol"`
-	P2PProxyListen     string      `json:"p2p_proxy_listen"`
-	BrowserRPCProtocol string      `json:"browser_rpc_protocol,omitempty"`
-	BrowserAddrs       []string    `json:"browser_addrs,omitempty"`
-	ListenAddrs        []string    `json:"listen_addrs"`
-	BootstrapPeers     []string    `json:"bootstrap_peers"`
-	BootstrapURLs      []string    `json:"bootstrap_urls"`
-	ConnectedPeers     []AdminPeer `json:"connected_peers"`
-	KnownPeers         []AdminPeer `json:"known_peers"`
+	NetworkID          string             `json:"network_id"`
+	Private            bool               `json:"private"`
+	PeerID             string             `json:"peer_id"`
+	OverlayMode        string             `json:"overlay_mode"`
+	ForceRelay         bool               `json:"force_relay"`
+	NATTraversal       NATTraversalStatus `json:"nat_traversal"`
+	Rendezvous         string             `json:"rendezvous"`
+	Topic              string             `json:"topic"`
+	RPCProtocol        string             `json:"rpc_protocol"`
+	NodeP2PProtocol    string             `json:"node_p2p_protocol"`
+	P2PProxyListen     string             `json:"p2p_proxy_listen"`
+	BrowserRPCProtocol string             `json:"browser_rpc_protocol,omitempty"`
+	BrowserAddrs       []string           `json:"browser_addrs,omitempty"`
+	ListenAddrs        []string           `json:"listen_addrs"`
+	BootstrapPeers     []string           `json:"bootstrap_peers"`
+	BootstrapURLs      []string           `json:"bootstrap_urls"`
+	ConnectedPeers     []AdminPeer        `json:"connected_peers"`
+	KnownPeers         []AdminPeer        `json:"known_peers"`
 }
 
 type AdminPeer struct {
@@ -163,6 +171,8 @@ type AdminPeer struct {
 	Addrs            []string `json:"addrs,omitempty"`
 	Conns            []string `json:"conns,omitempty"`
 	NodeP2PAvailable *bool    `json:"node_p2p_available,omitempty"`
+	Path             string   `json:"path"`
+	Transports       []string `json:"transports,omitempty"`
 }
 
 type peerStats struct {
@@ -249,6 +259,7 @@ func New(parent context.Context, cfg config.Config, local *node.Client, optional
 	if err != nil {
 		return nil, fmt.Errorf("create libp2p resource manager: %w", err)
 	}
+	connectivity := newConnectivityTracker()
 	opts := []libp2p.Option{
 		libp2p.Identity(priv),
 		libp2p.ListenAddrStrings(addrs...),
@@ -266,8 +277,15 @@ func New(parent context.Context, cfg config.Config, local *node.Client, optional
 	if cfg.EnableNATPortMap {
 		opts = append(opts, libp2p.NATPortMap())
 	}
-	if cfg.EnableHolePunching {
-		opts = append(opts, libp2p.EnableNATService(), libp2p.EnableHolePunching())
+	if effectiveNATTraversal(cfg) {
+		opts = append(opts,
+			libp2p.EnableNATService(),
+			libp2p.EnableAutoNATv2(),
+			libp2p.EnableHolePunching(
+				holepunch.DirectDialTimeout(8*time.Second),
+				holepunch.WithTracer(connectivity),
+			),
+		)
 	}
 	if cfg.RelayEnabled {
 		resources := relayv2.DefaultResources()
@@ -277,12 +295,19 @@ func New(parent context.Context, cfg config.Config, local *node.Client, optional
 		resources.MaxReservationsPerIP = 4
 		opts = append(opts, libp2p.EnableRelayService(relayv2.WithResources(resources)))
 	}
-	staticRelays := initialRelayCandidates(ctx, cfg)
+	if cfg.OverlayMode != "direct-only" {
+		opts = append(opts, libp2p.EnableAutoRelayWithPeerSource(
+			relayPeerSource(cfg),
+			autorelay.WithNumRelays(2),
+			autorelay.WithMinCandidates(2),
+			autorelay.WithMaxCandidates(64),
+			autorelay.WithBootDelay(10*time.Second),
+			autorelay.WithBackoff(time.Minute),
+			autorelay.WithMinInterval(30*time.Second),
+		))
+	}
 	if cfg.ForceRelay || cfg.OverlayMode == "relay-only" || cfg.OverlayMode == "relay-first" {
 		opts = append(opts, libp2p.ForceReachabilityPrivate())
-		if len(staticRelays) > 0 {
-			opts = append(opts, libp2p.EnableAutoRelayWithStaticRelays(staticRelays))
-		}
 	}
 	h, err := libp2p.New(opts...)
 	if err != nil {
@@ -306,8 +331,10 @@ func New(parent context.Context, cfg config.Config, local *node.Client, optional
 		rpcSlots:   make(chan struct{}, cfg.P2PRPCMaxConcurrent),
 		scanGlobal: rate.NewLimiter(rate.Every(15*time.Second), 1), scanSlots: make(chan struct{}, 1),
 		tunnels: make(map[peer.ID]int), nodePeers: make(map[peer.ID]bool),
-		p2pHealth: NodeP2PStatus{Enabled: cfg.NativeP2PProxy, Listen: cfg.P2PProxyListen},
-		cancel:    cancel,
+		p2pHealth:     NodeP2PStatus{Enabled: cfg.NativeP2PProxy, Listen: cfg.P2PProxyListen},
+		connectivity:  connectivity,
+		peerDialQueue: make(chan peer.AddrInfo, 256),
+		cancel:        cancel,
 	}
 	if cfg.BrowserWebTransport || cfg.BrowserWebRTC {
 		browserHost, err := newBrowserHost(cfg, priv)
@@ -330,6 +357,13 @@ func New(parent context.Context, cfg config.Config, local *node.Client, optional
 	s.run(func() { s.pubsubDrain(ctx) })
 	s.run(func() { s.announceLoop(ctx) })
 	s.run(func() { s.peerCacheLoop(ctx) })
+	s.run(func() { s.connectivityEventLoop(ctx) })
+	for range 4 {
+		s.run(func() { s.peerDialWorker(ctx) })
+	}
+	if effectiveNATTraversal(cfg) {
+		s.run(func() { s.directUpgradeLoop(ctx) })
+	}
 	if cfg.NativeP2PProxy {
 		s.run(func() { s.startNodeP2PProxy(ctx) })
 	}
@@ -353,16 +387,156 @@ func (s *Service) bootstrapLoop(ctx context.Context) {
 	connect()
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
+	lastRefresh := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if s.ConnectedPeerCount() == 0 {
+			// Keep more than one independent entry path. A single live peer is not
+			// enough for a resilient network, and even a healthy mesh periodically
+			// refreshes the signed bootstrap catalog to discover replacement relays.
+			if s.ConnectedPeerCount() < 2 || time.Since(lastRefresh) >= 5*time.Minute {
 				connect()
+				lastRefresh = time.Now()
 			}
 		}
 	}
+}
+
+func relayPeerSource(cfg config.Config) autorelay.PeerSource {
+	return func(ctx context.Context, requested int) <-chan peer.AddrInfo {
+		out := make(chan peer.AddrInfo)
+		go func() {
+			defer close(out)
+			if requested <= 0 {
+				return
+			}
+			candidates := initialRelayCandidates(ctx, cfg)
+			if len(candidates) > requested {
+				candidates = candidates[:requested]
+			}
+			for _, candidate := range candidates {
+				select {
+				case out <- candidate:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+		return out
+	}
+}
+
+func (s *Service) connectivityEventLoop(ctx context.Context) {
+	subscription, err := s.host.EventBus().Subscribe([]any{
+		new(event.EvtLocalReachabilityChanged),
+		new(event.EvtNATDeviceTypeChanged),
+	})
+	if err != nil {
+		log.Printf("[nat] event subscription failed: %v", err)
+		return
+	}
+	defer subscription.Close()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case value, ok := <-subscription.Out():
+			if !ok {
+				return
+			}
+			s.connectivity.consumeEvent(value)
+		}
+	}
+}
+
+func (s *Service) directUpgradeLoop(ctx context.Context) {
+	timer := time.NewTimer(20 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return
+	case <-timer.C:
+	}
+	s.tryDirectUpgrades(ctx)
+	ticker := time.NewTicker(2 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.tryDirectUpgrades(ctx)
+		}
+	}
+}
+
+func (s *Service) peerDialWorker(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case info := <-s.peerDialQueue:
+			if info.ID == s.host.ID() || s.host.Network().Connectedness(info.ID) == network.Connected {
+				continue
+			}
+			dialCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			err := s.host.Connect(dialCtx, info)
+			cancel()
+			if err == nil {
+				log.Printf("[overlay] connected announced peer %s", info.ID)
+			}
+		}
+	}
+}
+
+func (s *Service) tryDirectUpgrades(ctx context.Context) {
+	const maxAttemptsPerRound = 4
+	attempts := 0
+	for _, id := range s.host.Network().Peers() {
+		direct, relayed, _ := peerPathSummary(s.host, id)
+		if direct || !relayed {
+			continue
+		}
+		addrs := directDialAddrs(s.host.Peerstore().Addrs(id))
+		if len(addrs) == 0 {
+			continue
+		}
+		attempts++
+		dialCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+		dialCtx = network.WithForceDirectDial(dialCtx, "periodic NAT path upgrade")
+		err := s.host.Connect(dialCtx, peer.AddrInfo{ID: id, Addrs: addrs})
+		cancel()
+		upgraded, _, _ := peerPathSummary(s.host, id)
+		if err == nil && !upgraded {
+			err = errors.New("direct path was not established")
+		}
+		s.connectivity.recordDirectUpgrade(id, err == nil && upgraded, err)
+		if upgraded {
+			log.Printf("[nat] upgraded peer=%s from relay to direct", id)
+		}
+		if attempts >= maxAttemptsPerRound {
+			return
+		}
+	}
+}
+
+func directDialAddrs(addrs []ma.Multiaddr) []ma.Multiaddr {
+	result := make([]ma.Multiaddr, 0, len(addrs))
+	for _, addr := range addrs {
+		text := addr.String()
+		if strings.Contains(text, "/p2p-circuit") {
+			continue
+		}
+		// Periodic upgrades only dial literal public addresses. DNS bootstrap
+		// entries are still accepted by the trusted bootstrap connector, but
+		// peer-advertised DNS names are not suitable for background redials.
+		if multiaddrHasPublicIP(text) {
+			result = append(result, addr)
+		}
+	}
+	return result
 }
 
 func initialRelayCandidates(ctx context.Context, cfg config.Config) []peer.AddrInfo {
@@ -448,7 +622,8 @@ func (s *Service) Info() any {
 		IPv6:               s.cfg.EnableIPv6,
 		QUIC:               s.cfg.EnableQUIC,
 		NATPortMap:         s.cfg.EnableNATPortMap,
-		HolePunching:       s.cfg.EnableHolePunching,
+		HolePunching:       effectiveNATTraversal(s.cfg),
+		NATTraversal:       s.connectivity.snapshot(s.host, s.cfg),
 		Rendezvous:         s.overlay.Rendezvous,
 		Topic:              s.overlay.Topic,
 		RPCProtocol:        string(s.overlay.RPCProtocol),
@@ -475,6 +650,7 @@ func (s *Service) AdminState() any {
 		PeerID:             s.host.ID().String(),
 		OverlayMode:        s.cfg.OverlayMode,
 		ForceRelay:         s.cfg.ForceRelay,
+		NATTraversal:       s.connectivity.snapshot(s.host, s.cfg),
 		Rendezvous:         s.overlay.Rendezvous,
 		Topic:              s.overlay.Topic,
 		RPCProtocol:        string(s.overlay.RPCProtocol),
@@ -526,6 +702,7 @@ func (s *Service) adminPeer(id peer.ID) AdminPeer {
 		Score:         score,
 		PublicIP:      publicIP,
 	}
+	p.Path, p.Transports = peerPathLabel(s.host, id)
 	if stats != nil {
 		p.Successes = stats.successes
 		p.Failures = stats.failures
@@ -716,6 +893,7 @@ func (s *Service) rankedPeers() []peer.ID {
 
 func (s *Service) peerScore(id peer.ID) (float64, bool, *peerStats) {
 	publicIP := s.peerHasPublicIP(id)
+	direct, relayed, transports := peerPathSummary(s.host, id)
 	s.statsMu.Lock()
 	stats := s.stats[id]
 	var copyStats *peerStats
@@ -728,6 +906,16 @@ func (s *Service) peerScore(id peer.ID) (float64, bool, *peerStats) {
 	score := 100.0
 	if publicIP {
 		score += 250.0
+	}
+	// Prefer an already verified direct path. Public addresses alone do not
+	// prove that the current connection avoided a relay.
+	if direct {
+		score += 350.0
+		if transports["quic"] > 0 {
+			score += 40.0
+		}
+	} else if relayed {
+		score -= 120.0
 	}
 	if copyStats == nil {
 		return score, publicIP, nil
@@ -1029,16 +1217,43 @@ func (s *Service) connectCachedAndBootstrap(ctx context.Context) error {
 		byID[info.ID] = &copyInfo
 		order = append(order, info.ID)
 	}
+	type dialResult struct {
+		id  peer.ID
+		err error
+	}
+	results := make(chan dialResult, maxBootstrapDials)
+	sem := make(chan struct{}, 4)
+	started := 0
 	for _, id := range order {
-		info := byID[id]
-		connectCtx, cancel := context.WithTimeout(ctx, bootstrapTimeout)
-		err := s.host.Connect(connectCtx, *info)
-		cancel()
-		if err != nil {
-			errs = append(errs, err)
+		if started >= maxBootstrapDials {
+			break
+		}
+		if s.host.Network().Connectedness(id) == network.Connected {
 			continue
 		}
-		log.Printf("[p2p] connected to %s", info.ID)
+		info := *byID[id]
+		started++
+		go func() {
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				results <- dialResult{id: info.ID, err: ctx.Err()}
+				return
+			}
+			defer func() { <-sem }()
+			connectCtx, cancel := context.WithTimeout(ctx, bootstrapTimeout)
+			err := s.host.Connect(connectCtx, info)
+			cancel()
+			results <- dialResult{id: info.ID, err: err}
+		}()
+	}
+	for range started {
+		result := <-results
+		if result.err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", result.id, result.err))
+			continue
+		}
+		log.Printf("[p2p] connected to %s", result.id)
 	}
 	return errors.Join(errs...)
 }
@@ -1077,7 +1292,6 @@ func (s *Service) bootstrapPeerList(ctx context.Context) []string {
 			out = append(out, item)
 		}
 	}
-	add(loadPeerCache(s.cfg.PeerStorePath))
 	add(s.cfg.BootstrapPeers)
 	for _, url := range s.cfg.BootstrapURLs {
 		peers, err := fetchBootstrapURL(ctx, url)
@@ -1087,6 +1301,10 @@ func (s *Service) bootstrapPeerList(ctx context.Context) []string {
 		}
 		add(peers)
 	}
+	// Cached peers are useful when every catalog endpoint is blocked, but
+	// configured HTTPS bootstrap entries must win the bounded dial
+	// budget when both are available.
+	add(loadPeerCache(s.cfg.PeerStorePath))
 	return out
 }
 
@@ -1439,10 +1657,16 @@ func (s *Service) handlePeerAnnounce(ctx context.Context, ann peerAnnounce) {
 	if len(info.Addrs) == 0 {
 		return
 	}
-	connectCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	if err := s.host.Connect(connectCtx, info); err == nil {
-		log.Printf("[overlay] connected announced peer %s", ann.PeerID)
+	// Keep the pubsub reader responsive when hundreds of peers announce at
+	// once. Addresses are cached immediately, while a bounded worker pool does
+	// the potentially slow NAT/relay dial.
+	s.host.Peerstore().AddAddrs(id, info.Addrs, 10*time.Minute)
+	select {
+	case s.peerDialQueue <- info:
+	case <-ctx.Done():
+	default:
+		// The next 30-second announcement will retry. Dropping here is safer than
+		// letting an attacker or a reconnect storm allocate unbounded goroutines.
 	}
 }
 

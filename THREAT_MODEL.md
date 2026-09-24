@@ -35,6 +35,13 @@ RPC methods are deny-by-default at the overlay/browser boundary. Expensive
 scans have descriptor validation, global serialization and rate limits. Node
 control, wallet signing and arbitrary destination tunnelling are prohibited.
 
+Adaptive NAT traversal does not expose the local RPC or native tunnel. DCUtR
+upgrades an already authenticated libp2p relay connection, and periodic direct
+redials accept only literal public IP multiaddrs; private, loopback and
+peer-controlled DNS targets are rejected. UPnP/NAT-PMP port mapping remains
+disabled by default. Relay service is a separate operator role with reservation,
+circuit, byte and time limits; ordinary client templates do not enable it.
+
 ## RPC answer integrity
 
 Remote RPC answers are availability fallbacks, not cryptographic proofs. A

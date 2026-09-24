@@ -26,11 +26,11 @@ func TestLoadCreatesDefaultConfig(t *testing.T) {
 	if cfg.PeerStorePath != filepath.Join(dir, "peers.json") {
 		t.Fatalf("peer store should be relative to config dir: %s", cfg.PeerStorePath)
 	}
-	if cfg.OverlayMode != "relay-first" || !cfg.ForceRelay {
-		t.Fatalf("relay-first overlay defaults not applied: %+v", cfg)
+	if cfg.OverlayMode != "adaptive" || cfg.ForceRelay || cfg.RelayEnabled {
+		t.Fatalf("adaptive client overlay defaults not applied: %+v", cfg)
 	}
-	if cfg.EnableNATPortMap || cfg.EnableHolePunching {
-		t.Fatalf("nat punching must be disabled by default: %+v", cfg)
+	if cfg.EnableNATPortMap || !cfg.EnableHolePunching || cfg.NATTraversalEnabled == nil || !*cfg.NATTraversalEnabled {
+		t.Fatalf("safe adaptive NAT traversal defaults not applied: %+v", cfg)
 	}
 	if cfg.OverlayPSK != "" {
 		t.Fatalf("the shared default overlay must derive its PSK from network id, got %q", cfg.OverlayPSK)
@@ -43,6 +43,21 @@ func TestLoadCreatesDefaultConfig(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLoadKeepsExplicitNATTraversalOptOut(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "proxy.json")
+	if err := os.WriteFile(path, []byte(`{"nat_traversal_enabled":false}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.NATTraversalEnabled == nil || *cfg.NATTraversalEnabled {
+		t.Fatal("explicit NAT traversal opt-out was ignored")
 	}
 }
 

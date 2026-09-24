@@ -10,7 +10,11 @@
   "allowed_ips": [],
   "trusted_proxies": [],
   "api_token": "",
-  "bootstrap_peers": [],
+  "bootstrap_peers": [
+    "/ip4/188.137.231.146/tcp/10001/p2p/12D3KooWAopsKnQhhWeVxEzM2XCyqL2UZoSD8BLGqvAKALJQRG7E",
+    "/ip6/2a13:4ac0:28:8:f816:3eff:fe96:32e7/tcp/10001/p2p/12D3KooWAopsKnQhhWeVxEzM2XCyqL2UZoSD8BLGqvAKALJQRG7E",
+    "/ip4/185.55.243.2/tcp/10001/p2p/12D3KooWGRc1T2kFHdsX81HvZk1Sn4VUJx4kJn9yYPSkF9tJkQoM"
+  ],
   "bootstrap_urls": [
     "https://link.zeroscan.st/.well-known/zhp2pproxy/peers.json",
     "https://link.zeroscan.st/peers.json"
@@ -26,7 +30,8 @@
     "http://localhost:5173",
     "http://127.0.0.1:5173"
   ],
-  "enable_hole_punching": false,
+  "enable_hole_punching": true,
+  "nat_traversal_enabled": true,
   "enable_ipv6": true,
   "enable_nat_port_map": false,
   "enable_quic": true,
@@ -61,7 +66,7 @@
   "node_config_path": "",
   "node_p2p_host": "127.0.0.1",
   "node_p2p_port": 38100,
-  "overlay_mode": "public-relay",
+  "overlay_mode": "adaptive",
   "overlay_network_id": "zhcash-proxy-main",
   "overlay_private": true,
   "overlay_psk": "",
@@ -72,7 +77,7 @@
   "public_endpoint": "",
   "rate_burst": 40,
   "rate_limit": 20,
-  "relay_enabled": true,
+  "relay_enabled": false,
   "rpc_cookie_path": "",
   "rpc_host": "127.0.0.1",
   "rpc_pass": "",

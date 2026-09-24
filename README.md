@@ -333,7 +333,9 @@ override нет. SHA-256 с того же web-сервера проверяет 
 - proxy-only overlay: приложение строит свою private P2P-сеть без TUN/TAP, без изменения системных маршрутов, DNS и текущего VPN пользователя;
 - отдельная ZeroTier-подобная сеть прокси через `overlay_network_id`: разные network id получают разные protocol id и подписанный pubsub topic;
 - libp2p pnet separation через `overlay_private` и `overlay_psk`; детерминированный ключ общей сети публичен и не считается контролем доступа;
-- relay-first режим: приватные ноды за NAT подключаются исходящим соединением к публичным relay/bootstrap-нОДам и общаются через `/p2p-circuit`;
+- адаптивный NAT traversal: AutoNAT определяет доступность, QUIC/TCP сначала
+  строят прямой путь, DCUtR пробивает NAT через уже работающий relay-канал, а
+  circuit relay остается гарантированным резервом;
 - начальная точка входа `link.zeroscan.st`: прокси читает bootstrap peers только по HTTPS, использует их как AutoRelay-кандидатов, а дальше сеть живет через подписанные peer announce и локальный peer cache; уязвимый Kademlia DHT не используется;
 - native binary P2P tunnel: локальный TCP listener `p2p_proxy_listen` проксирует только соединения, начавшиеся с корректного ZHCASH mainnet `version` (`f1cfa6d3` и валидная checksum), и подтверждает version-exchange в `/health`;
 - read-only публичные RPC методы распределяются по connected overlay peers, чтобы не нагружать одну RPC-ноду;
@@ -362,13 +364,14 @@ override нет. SHA-256 с того же web-сервера проверяет 
   "overlay_network_id": "my-zhcash-overlay",
   "overlay_private": true,
   "overlay_psk": "32-byte-key-as-64-hex-chars",
-  "overlay_mode": "relay-first",
-  "force_relay": true,
-  "relay_enabled": true,
+  "overlay_mode": "adaptive",
+  "force_relay": false,
+  "relay_enabled": false,
   "enable_ipv6": true,
   "enable_quic": true,
   "enable_nat_port_map": false,
-  "enable_hole_punching": false,
+  "enable_hole_punching": true,
+  "nat_traversal_enabled": true,
   "node_p2p_host": "127.0.0.1",
   "node_p2p_port": 38100,
   "p2p_proxy_listen": "127.0.0.1:3890",
@@ -401,9 +404,28 @@ override нет. SHA-256 с того же web-сервера проверяет 
 
 `overlay_private: true` включает libp2p private network. Если `overlay_psk` задан, все ноды должны иметь одинаковый 32-byte ключ в hex/base64. Если `overlay_psk` пустой, ключ детерминированно выводится из `overlay_network_id`. Такой общий ключ отделяет протокол от других libp2p-сетей, но не является контролем доступа: исходный код и network id публичны. Для действительно закрытой сети нужен случайный секретный PSK, доставленный участникам отдельно.
 
-Для нод за NAT используй `overlay_mode: "relay-first"` и `force_relay: true`. В этом режиме нода считает себя private, не открывает NAT через UPnP/NAT-PMP и не запускает hole punching. Ей нужен хотя бы один публичный bootstrap/relay peer в `bootstrap_peers`; без публичного relay ноды за разными NAT не смогут гарантированно найти маршрут друг к другу.
+Обычная пользовательская нода использует `overlay_mode: "adaptive"`,
+`nat_traversal_enabled: true` и `relay_enabled: false`. AutoNAT определяет
+фактическую доступность. Если прямой входящий путь отсутствует, AutoRelay
+держит резервирование сразу на двух relay, а DCUtR продолжает пытаться
+перевести соединение в прямой TCP/QUIC. Каждые две минуты прокси дополнительно
+проверяет публичные адреса relayed peers и безопасно повышает путь до direct,
+не обращаясь к частным и loopback-адресам.
 
-Публичная relay/bootstrap-нода должна быть доступна из интернета по TCP/UDP `p2p_port` и иметь `relay_enabled: true`. Приватным нодам входящие порты не нужны: они сами держат исходящее соединение к relay, а остальные прокси обращаются к ним по circuit relay адресу.
+`enable_nat_port_map` по умолчанию выключен: UPnP/NAT-PMP можно разрешить
+отдельно только в доверенной домашней сети. Для сети, где прямые соединения
+запрещены политикой, остаются явные `overlay_mode: "relay-only"` или
+`force_relay: true`; они отключают NAT traversal.
+
+Для массового запуска peer announcements обрабатываются ограниченным пулом
+dial-workers: сотни одновременных объявлений не блокируют GossipSub и не
+создают неограниченное число goroutine. Bootstrap-подключения выполняются
+параллельно с фиксированным пределом, поддерживаются минимум два входных пути,
+а настроенный HTTPS-каталог имеет приоритет перед локальным кэшем.
+
+Публичная relay/bootstrap-нода должна быть доступна из интернета по TCP/UDP
+`p2p_port`, иметь `overlay_mode: "public-relay"` и
+`relay_enabled: true`. Приватным нодам входящие порты не нужны.
 Relay имеет собственные пределы: до 128 reservations, до 8 circuits на peer,
 до 4 reservations с одного IP и не более 1 GiB/6 часов на одно relayed
 соединение. Native-туннель дополнительно ограничивается по peers, числу
@@ -415,7 +437,11 @@ Relay имеет собственные пределы: до 128 reservations, �
 
 Удаленная сторона может подключаться только к loopback `node_p2p_host`; превратить overlay в прокси до произвольного адреса нельзя. Основной mainnet-порт — `38100`. Для миграции старых конфигов автоматически проверяются также ранее использованные `8003` и `3888`, а фактически найденный адрес показывается в `/health`. Число туннелей ограничено глобально и на один Peer ID, трафик каждого направления ограничен `p2p_max_bytes_per_second`.
 
-Так блоки и native p2p messages могут идти между ZHCash-нОДами через overlay даже если обе ноды сидят за NAT. Для strict/symmetric NAT используется relay. Если позже захочешь direct-соединения там, где это возможно, можно включить `enable_hole_punching: true`, но гарантированный режим для всех NAT - это relay-first.
+Так блоки и native p2p messages идут между ZHCash-нодами напрямую, когда NAT
+это допускает, и автоматически возвращаются на relay при strict/symmetric NAT.
+`/info` и `/admin/status` показывают `nat_traversal`: reachability, тип
+NAT для TCP/UDP, число direct/relay peers, используемые транспорты, результаты
+hole punching и периодического direct-upgrade.
 
 ## Admin API
 

@@ -63,6 +63,7 @@ type Config struct {
 	EnableQUIC                bool             `json:"enable_quic"`
 	EnableNATPortMap          bool             `json:"enable_nat_port_map"`
 	EnableHolePunching        bool             `json:"enable_hole_punching"`
+	NATTraversalEnabled       *bool            `json:"nat_traversal_enabled,omitempty"`
 	NodeP2PHost               string           `json:"node_p2p_host"`
 	NodeP2PPort               int              `json:"node_p2p_port"`
 	P2PProxyListen            string           `json:"p2p_proxy_listen"`
@@ -97,6 +98,7 @@ type ChainRPCConfig struct {
 }
 
 func Default() Config {
+	natTraversalEnabled := true
 	return Config{
 		Listen:                  "127.0.0.1:8081",
 		P2PPort:                 10001,
@@ -108,12 +110,16 @@ func Default() Config {
 		RPCURL:                  "",
 		RPCHost:                 "127.0.0.1",
 		RPCPort:                 3889,
-		BootstrapPeers:          []string{},
-		BootstrapURLs:           []string{"https://link.zeroscan.st/.well-known/zhp2pproxy/peers.json", "https://link.zeroscan.st/peers.json"},
-		RateLimit:               20,
-		RateBurst:               40,
-		AllowedIPs:              []string{},
-		TrustedProxies:          []string{},
+		BootstrapPeers: []string{
+			"/ip4/188.137.231.146/tcp/10001/p2p/12D3KooWAopsKnQhhWeVxEzM2XCyqL2UZoSD8BLGqvAKALJQRG7E",
+			"/ip6/2a13:4ac0:28:8:f816:3eff:fe96:32e7/tcp/10001/p2p/12D3KooWAopsKnQhhWeVxEzM2XCyqL2UZoSD8BLGqvAKALJQRG7E",
+			"/ip4/185.55.243.2/tcp/10001/p2p/12D3KooWGRc1T2kFHdsX81HvZk1Sn4VUJx4kJn9yYPSkF9tJkQoM",
+		},
+		BootstrapURLs:  []string{"https://link.zeroscan.st/.well-known/zhp2pproxy/peers.json", "https://link.zeroscan.st/peers.json"},
+		RateLimit:      20,
+		RateBurst:      40,
+		AllowedIPs:     []string{},
+		TrustedProxies: []string{},
 		CORSAllowedOrigins: []string{
 			"https://wallet.zeroscan.st",
 			"https://sforwallet.io",
@@ -127,13 +133,14 @@ func Default() Config {
 		IdentityKeyPath:          "identity.key",
 		OverlayNetworkID:         "zhcash-proxy-main",
 		OverlayPrivate:           true,
-		OverlayMode:              "relay-first",
-		ForceRelay:               true,
-		RelayEnabled:             true,
+		OverlayMode:              "adaptive",
+		ForceRelay:               false,
+		RelayEnabled:             false,
 		EnableIPv6:               true,
 		EnableQUIC:               true,
 		EnableNATPortMap:         false,
-		EnableHolePunching:       false,
+		EnableHolePunching:       true,
+		NATTraversalEnabled:      &natTraversalEnabled,
 		NodeP2PHost:              "127.0.0.1",
 		NodeP2PPort:              38100,
 		P2PProxyListen:           "127.0.0.1:3890",
@@ -375,6 +382,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.BootstrapURLs == nil {
 		cfg.BootstrapURLs = def.BootstrapURLs
+	}
+	if len(cfg.BootstrapPeers) == 0 && len(cfg.BootstrapURLs) > 0 {
+		cfg.BootstrapPeers = def.BootstrapPeers
 	}
 	if cfg.RateLimit <= 0 {
 		cfg.RateLimit = def.RateLimit

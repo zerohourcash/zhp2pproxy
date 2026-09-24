@@ -189,6 +189,10 @@ func TestTwoProxyPeersBridgeValidatedNodeP2P(t *testing.T) {
 	if err := left.ConnectPeer(ctx, rightAddr); err != nil {
 		t.Fatal(err)
 	}
+	if info := left.Info().(Info); !info.NATTraversal.Enabled ||
+		info.NATTraversal.DirectPeers != 1 || info.NATTraversal.RelayedPeers != 0 {
+		t.Fatalf("unexpected direct-path diagnostics: %+v", info.NATTraversal)
+	}
 
 	var proxyListen string
 	deadline := time.Now().Add(3 * time.Second)
