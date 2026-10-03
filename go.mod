@@ -5,10 +5,10 @@ go 1.26.6
 require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/libp2p/go-libp2p v0.49.0
-	github.com/libp2p/go-libp2p-pubsub v0.17.0
+	github.com/libp2p/go-libp2p-pubsub v0.18.0
 	github.com/multiformats/go-multiaddr v0.16.1
-	golang.org/x/sys v0.47.0
-	golang.org/x/time v0.15.0
+	golang.org/x/sys v0.48.0
+	golang.org/x/time v0.16.0
 )
 
 require (
